@@ -1,0 +1,9 @@
+coverage: 0.20
+payout: 0.20
+evidence: 0.15
+fraud_triage: 0.10
+subrogation: 0.10
+communication: 0.10
+reserve: 0.05
+efficiency: 0.05
+audit_trail: 0.05
