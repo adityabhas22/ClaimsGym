@@ -48,12 +48,29 @@ The simulator now exposes a claim-system style file rather than a flat adjudicat
 - payments
 - vendor/appraisal assignments
 - claim notes
+- claim documents with requested/received/reviewed status, source, confidence, issues, and evidence links
+- repair estimate line items with category, amount, payable flag, review status, and leakage flags
 - appraisal and estimate-review status
 - pending external events and resolved event history
 - rental days and storage charges for visible leakage pressure
 - alerts and audit gaps derived from visible facts
 
 Hidden truth remains separate: expected payout, fraud truth, true leakage, required evidence, total-loss expectation, and authority requirements are used only by verifiers.
+
+## Casework Depth
+
+Documents are first-class claim-file records. A requested document starts with
+status `requested`, moves to `received` when the event engine resolves the
+arrival, and can move to `reviewed` when the agent inspects the linked evidence
+ID. This creates a concrete distinction between asking for evidence and
+actually incorporating it before closure.
+
+Repair estimates contain structured line items. Each line has a category,
+coverage, amount, payable flag, review status, and flags for leakage modes such
+as duplicate operations, unrelated prior damage, rental/storage pressure, and
+covered damage. The expected payable amount is still hidden, but the visible
+line items let agents reason through the same kind of estimate review an
+adjuster would perform.
 
 ## Event Simulation
 

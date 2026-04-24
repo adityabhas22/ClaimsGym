@@ -148,6 +148,43 @@ class Evidence(BaseModel):
     flags: list[str] = Field(default_factory=list)
 
 
+class ClaimDocument(BaseModel):
+    document_id: str
+    doc_type: DocumentType
+    title: str
+    source: Literal["claimant", "carrier", "vendor", "police", "system"]
+    status: Literal["requested", "received", "reviewed", "rejected"] = "requested"
+    evidence_id: str | None = None
+    confidence: Literal["low", "medium", "high"] = "medium"
+    summary: str = ""
+    issues: list[str] = Field(default_factory=list)
+    contradicts_evidence_ids: list[str] = Field(default_factory=list)
+    related_object_id: str | None = None
+
+
+class EstimateLineItem(BaseModel):
+    line_id: str
+    category: Literal[
+        "labor",
+        "parts",
+        "paint_materials",
+        "towing",
+        "storage",
+        "rental",
+        "tax_fee",
+        "betterment",
+        "prior_damage",
+        "duplicate",
+        "misc",
+    ]
+    description: str
+    amount: float = Field(ge=0)
+    coverage: CoverageType
+    payable: bool = True
+    review_status: Literal["unreviewed", "approved", "questioned", "excluded", "supplement_pending"] = "unreviewed"
+    flags: list[str] = Field(default_factory=list)
+
+
 class RepairEstimate(BaseModel):
     estimate_id: str
     gross_amount: float = Field(ge=0)
@@ -160,6 +197,7 @@ class RepairEstimate(BaseModel):
     paint_materials_amount: float = Field(default=0, ge=0)
     total_loss_threshold: float | None = None
     photo_quality: Literal["good", "partial", "poor"] = "good"
+    line_items: list[EstimateLineItem] = Field(default_factory=list)
 
 
 class Party(BaseModel):
@@ -270,6 +308,7 @@ class PlatformState(BaseModel):
     payments: list[Payment] = Field(default_factory=list)
     vendor_assignments: list[VendorAssignment] = Field(default_factory=list)
     notes: list[ClaimNote] = Field(default_factory=list)
+    documents: list[ClaimDocument] = Field(default_factory=list)
     pending_events: list[PendingEvent] = Field(default_factory=list)
     event_history: list[EventRecord] = Field(default_factory=list)
     rental_days: int = Field(default=0, ge=0)
@@ -390,6 +429,7 @@ class Observation(BaseModel):
     payments: list[Payment] = Field(default_factory=list)
     vendor_assignments: list[VendorAssignment] = Field(default_factory=list)
     claim_notes: list[ClaimNote] = Field(default_factory=list)
+    claim_documents: list[ClaimDocument] = Field(default_factory=list)
     pending_events: list[PendingEvent] = Field(default_factory=list)
     event_history: list[EventRecord] = Field(default_factory=list)
     rental_days: int = 0

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, ValidationError
 from claimsops_env.models import (
     Action,
     ActivityStatus,
+    ClaimDocument,
     AppraisalStatus,
     ClaimNote,
     CoverageType,
@@ -244,6 +245,9 @@ class InspectEvidenceTool(ToolHandler):
         parsed = InspectEvidenceArgs.model_validate(args)
         for evidence in runtime.evidence:
             if evidence.evidence_id == parsed.evidence_id:
+                for document in runtime.platform_state.documents:
+                    if document.evidence_id == parsed.evidence_id and document.status == "received":
+                        document.status = "reviewed"
                 if evidence.kind == EvidenceKind.REPAIR_ESTIMATE:
                     runtime.workflow.estimate_seen = True
                     _complete_activity(runtime, "estimate", "repair estimate inspected")
@@ -259,6 +263,19 @@ class RequestDocumentTool(ToolHandler):
         if parsed.doc_type not in runtime.workflow.documents_requested:
             runtime.workflow.documents_requested.append(parsed.doc_type)
         evidence_id = f"EV-DOC-{parsed.doc_type.value.upper()}"
+        if not any(document.doc_type == parsed.doc_type and document.status == "requested" for document in runtime.platform_state.documents):
+            runtime.platform_state.documents.append(
+                ClaimDocument(
+                    document_id=f"DOC-{parsed.doc_type.value.upper()}-{len(runtime.platform_state.documents) + 1:03d}",
+                    doc_type=parsed.doc_type,
+                    title=parsed.doc_type.value.replace("_", " ").title(),
+                    source=_document_source(parsed.doc_type),
+                    status="requested",
+                    confidence="medium",
+                    summary=f"Requested for claim handling. Reason: {parsed.reason}",
+                    related_object_id=runtime.spec.claim.claim_id,
+                )
+            )
         if parsed.doc_type not in runtime.workflow.documents_received and not _pending_event(
             runtime, "document_arrival", doc_type=parsed.doc_type.value
         ):
@@ -425,6 +442,7 @@ class ReviewEstimateTool(ToolHandler):
             raise ToolError("estimate_id does not match this claim file")
         runtime.workflow.estimate_reviewed = True
         runtime.platform_state.estimate_review_decision = parsed.action
+        _apply_line_item_review(runtime, parsed.action)
         runtime.platform_state.appraisal_status = (
             AppraisalStatus.SUPPLEMENT_REQUESTED
             if parsed.action == EstimateReviewDecision.REQUEST_SUPPLEMENT
@@ -762,6 +780,32 @@ def _pending_event(runtime: RuntimeView, event_type: str, **payload_filters: str
         if all(str(event.payload.get(key)) == value for key, value in payload_filters.items()):
             return True
     return False
+
+
+def _document_source(doc_type: DocumentType) -> str:
+    if doc_type == DocumentType.POLICE_REPORT:
+        return "police"
+    if doc_type == DocumentType.REPAIR_ESTIMATE_BREAKDOWN:
+        return "vendor"
+    return "claimant"
+
+
+def _apply_line_item_review(runtime: RuntimeView, action: EstimateReviewDecision) -> None:
+    for line in runtime.spec.repair_estimate.line_items:
+        flags = set(line.flags)
+        if "duplicate_line" in flags or "prior_damage" in flags or "not_loss_related" in flags:
+            if action == EstimateReviewDecision.REQUEST_SUPPLEMENT:
+                line.review_status = "supplement_pending"
+            elif action == EstimateReviewDecision.ESCALATE_FIELD:
+                line.review_status = "questioned"
+            elif action == EstimateReviewDecision.APPROVE:
+                line.review_status = "approved"
+            else:
+                line.review_status = "questioned"
+        elif action in {EstimateReviewDecision.APPROVE, EstimateReviewDecision.CONFIRM_TOTAL_LOSS}:
+            line.review_status = "approved"
+        elif action == EstimateReviewDecision.REQUEST_SUPPLEMENT:
+            line.review_status = "supplement_pending"
 
 
 def _find_exposure(runtime: RuntimeView, exposure_id: str) -> Exposure | None:

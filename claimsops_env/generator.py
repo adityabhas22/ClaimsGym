@@ -7,12 +7,14 @@ from datetime import date, timedelta
 from claimsops_env.models import (
     Activity,
     AppraisalStatus,
+    ClaimDocument,
     ClaimScenario,
     ClaimType,
     CoverageType,
     DocumentType,
     Evidence,
     EvidenceKind,
+    EstimateLineItem,
     EstimateReviewDecision,
     Exposure,
     ExposureStatus,
@@ -188,11 +190,19 @@ class ScenarioGenerator:
             unrelated_damage_amount=unrelated,
             duplicate_line_amount=duplicate,
             notes=notes,
-            labor_hours=round(gross / 120.0, 1),
-            parts_amount=round(gross * 0.42, 2),
-            paint_materials_amount=round(gross * 0.12, 2),
+            labor_hours=round(covered_amount / 120.0, 1),
+            parts_amount=round(covered_amount * 0.42, 2),
+            paint_materials_amount=round(covered_amount * 0.12, 2),
             total_loss_threshold=round(policy.limit_for(claim_type) * 0.75, 2),
             photo_quality=photo_quality,  # type: ignore[arg-type]
+            line_items=self._estimate_line_items(
+                estimate_id=estimate_id,
+                claim_type=claim_type,
+                covered_amount=covered_amount,
+                unrelated=unrelated,
+                duplicate=duplicate,
+                family=family,
+            ),
         )
         platform_state = self._platform_state(
             claim=claim,
@@ -203,6 +213,7 @@ class ScenarioGenerator:
             suspicious=suspicious,
             expected_total_loss=expected_total_loss,
             template=template,
+            required_docs=required_docs,
         )
         min_reserve = max(500.0, expected_payable * 0.85 if expected_payable else gross * 0.5)
         max_reserve = max(min_reserve + 250.0, expected_payable * 1.25 if expected_payable else gross * 1.1)
@@ -250,6 +261,7 @@ class ScenarioGenerator:
         suspicious: bool,
         expected_total_loss: bool,
         template: ScenarioTemplate,
+        required_docs: set[DocumentType],
     ) -> PlatformState:
         insured = Party(
             party_id=claim.customer_id,
@@ -375,11 +387,38 @@ class ScenarioGenerator:
             )
             for profile in template.initial_event_profiles
         ]
+        documents = [
+            ClaimDocument(
+                document_id="DOC-FNOL-STATEMENT",
+                doc_type=DocumentType.CLAIMANT_STATEMENT,
+                title="First notice claimant statement",
+                source="claimant",
+                status="received",
+                evidence_id="EV-STATEMENT",
+                confidence="medium",
+                summary=claim.claimant_statement,
+                issues=["incomplete"] if DocumentType.CLAIMANT_STATEMENT in required_docs else [],
+                related_object_id=claim.claim_id,
+            ),
+            ClaimDocument(
+                document_id=f"DOC-{claim.estimate_id}",
+                doc_type=DocumentType.REPAIR_ESTIMATE_BREAKDOWN,
+                title="Initial repair estimate",
+                source="vendor",
+                status="received",
+                evidence_id=claim.estimate_id,
+                confidence="high" if not template.visible_estimate_flags else "medium",
+                summary="Initial estimate imported with line-item detail.",
+                issues=list(template.visible_estimate_flags),
+                related_object_id=claim.estimate_id,
+            ),
+        ]
         return PlatformState(
             parties=parties,
             incidents=[incident],
             exposures=[exposure],
             activities=activities,
+            documents=documents,
             pending_events=pending_events,
             appraisal_status=AppraisalStatus.NOT_ASSIGNED,
         )
@@ -391,3 +430,108 @@ class ScenarioGenerator:
         if amount < 8000:
             return ReserveBand.MEDIUM
         return ReserveBand.HIGH
+
+    @staticmethod
+    def _estimate_line_items(
+        estimate_id: str,
+        claim_type: ClaimType,
+        covered_amount: float,
+        unrelated: float,
+        duplicate: float,
+        family: str,
+    ) -> list[EstimateLineItem]:
+        coverage = CoverageType.COMPREHENSIVE if claim_type == ClaimType.COMPREHENSIVE else CoverageType.COLLISION
+        expense_amount = 360.0 if family == "rental_storage_leakage" else 0.0
+        repair_amount = max(0.0, covered_amount - expense_amount)
+        base_lines = [
+            (
+                "labor",
+                "Body labor for covered loss damage",
+                round(repair_amount * 0.34, 2),
+                ["covered_damage"],
+            ),
+            (
+                "parts",
+                "Replacement parts for covered loss damage",
+                round(repair_amount * 0.42, 2),
+                ["covered_damage"],
+            ),
+            (
+                "paint_materials",
+                "Paint and materials for covered panels",
+                round(repair_amount * 0.14, 2),
+                ["covered_damage"],
+            ),
+        ]
+        used = sum(line[2] for line in base_lines)
+        base_lines.append(
+            (
+                "tax_fee",
+                "Shop supplies and taxable fees",
+                round(max(0.0, repair_amount - used), 2),
+                ["covered_damage"],
+            )
+        )
+        items = [
+            EstimateLineItem(
+                line_id=f"{estimate_id}-L{index:02d}",
+                category=category,  # type: ignore[arg-type]
+                description=description,
+                amount=amount,
+                coverage=coverage,
+                payable=True,
+                flags=flags,
+            )
+            for index, (category, description, amount, flags) in enumerate(base_lines, start=1)
+            if amount > 0
+        ]
+        if unrelated:
+            items.append(
+                EstimateLineItem(
+                    line_id=f"{estimate_id}-L{len(items) + 1:02d}",
+                    category="prior_damage",
+                    description="Left quarter-panel repair unrelated to reported loss",
+                    amount=round(unrelated, 2),
+                    coverage=coverage,
+                    payable=False,
+                    review_status="questioned",
+                    flags=["prior_damage", "not_loss_related"],
+                )
+            )
+        if duplicate:
+            items.append(
+                EstimateLineItem(
+                    line_id=f"{estimate_id}-L{len(items) + 1:02d}",
+                    category="duplicate",
+                    description="Duplicate paint materials operation",
+                    amount=round(duplicate, 2),
+                    coverage=coverage,
+                    payable=False,
+                    review_status="questioned",
+                    flags=["duplicate_line"],
+                )
+            )
+        if family == "rental_storage_leakage":
+            items.extend(
+                [
+                    EstimateLineItem(
+                        line_id=f"{estimate_id}-L{len(items) + 1:02d}",
+                        category="storage",
+                        description="Initial tow-yard storage charge",
+                        amount=150.0,
+                        coverage=coverage,
+                        payable=True,
+                        flags=["expense_leakage"],
+                    ),
+                    EstimateLineItem(
+                        line_id=f"{estimate_id}-L{len(items) + 2:02d}",
+                        category="rental",
+                        description="Rental authorization pending repair review",
+                        amount=210.0,
+                        coverage=coverage,
+                        payable=True,
+                        flags=["expense_leakage"],
+                    ),
+                ]
+            )
+        return items

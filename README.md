@@ -67,6 +67,11 @@ Scenario templates now cover 15+ realistic auto physical-damage workflows, inclu
 
 Several tools schedule pending operational events instead of instantly returning answers. Requested documents, appraisals, supplements, valuations, and authority decisions arrive on later steps and are exposed through the observation as pending events and event history.
 
+The claim file also tracks document lifecycle records and repair estimate line
+items. This lets rewards distinguish requested versus received versus reviewed
+evidence, and lets leakage control score duplicate/prior-damage line handling
+instead of relying only on one aggregate estimate amount.
+
 See `CODEX.md` for the full project brief and extension plan.
 
 All rollout paths share `claimsops_env.agent_interface.RolloutRunner`; keep SFT generation, GRPO rewards, baseline evaluation, and model inference on that one interface.

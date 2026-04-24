@@ -65,10 +65,16 @@ The initial observation is compact and includes the visible claim file, availabl
 
 Observations also expose realistic platform state:
 
+- claim documents with source, status, confidence, issues, related evidence ID, and contradictions
 - pending external events, such as document arrival, appraisal completion, valuation reports, and authority decisions
 - event history
 - visible storage/rental leakage counters
 - alerts and audit gaps derived from visible facts
+
+`inspect_repair_estimate` returns line-item estimate detail rather than only a
+gross amount. Line items carry category, amount, coverage, payable/nonpayable
+status, review status, and flags such as duplicate line, prior damage, or
+expense leakage.
 
 ## Tool Design
 
@@ -137,6 +143,11 @@ Requesting the right document helps, but final payment before the document
 arrives remains capped. Compliance and leakage rewards also account for
 pending external events, authority approval state, rental days, and storage
 charges.
+
+The evidence reward also gives additional credit when required documents are
+actually inspected after receipt. Leakage reward checks estimate line-item
+handling, so approving a duplicate or prior-damage line as payable is penalized
+even if the final scalar payout happens to be close.
 
 ## Extensibility Rules
 

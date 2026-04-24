@@ -12,6 +12,7 @@ from claimsops_env.models import (
     FinalDecision,
     HiddenTruth,
     PlatformState,
+    RepairEstimate,
     RewardBreakdown,
     WorkflowState,
 )
@@ -26,6 +27,7 @@ class RewardContext:
     approved_payment: float | None
     reserve_amount: float | None
     platform_state: PlatformState
+    repair_estimate: RepairEstimate
     action_log: list[ActionRecord]
     evidence_ids: set[str]
     requested_documents: list[DocumentType | str]
@@ -125,7 +127,13 @@ class EvidenceReward:
         if required:
             requested_score = len(required & requested) / len(required)
             received_score = len(required & received) / len(required)
-            completeness = 0.6 * requested_score + 0.4 * received_score
+            reviewed = {
+                document.doc_type.value
+                for document in context.platform_state.documents
+                if document.status == "reviewed"
+            }
+            reviewed_score = len(required & reviewed) / len(required)
+            completeness = 0.45 * requested_score + 0.35 * received_score + 0.20 * reviewed_score
         else:
             completeness = 1.0
         unnecessary = len(requested - required)
@@ -147,6 +155,18 @@ class LeakageControlReward:
             score -= 0.45 if review != context.hidden.expected_estimate_review else 0.0
         elif review not in {EstimateReviewDecision.APPROVE, None}:
             score -= 0.15
+        nonpayable_lines = [
+            line
+            for line in context.repair_estimate.line_items
+            if not line.payable or {"duplicate_line", "prior_damage", "not_loss_related"} & set(line.flags)
+        ]
+        if nonpayable_lines:
+            mishandled = [
+                line
+                for line in nonpayable_lines
+                if line.review_status not in {"questioned", "excluded", "supplement_pending"}
+            ]
+            score -= min(0.35, 0.18 * len(mishandled))
 
         issued = [payment for payment in context.platform_state.payments if payment.status == "issued"]
         paid = sum(payment.amount for payment in issued)

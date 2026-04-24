@@ -11,6 +11,7 @@ from claimsops_env.models import (
     ActionRecord,
     ActivityStatus,
     AppraisalStatus,
+    ClaimDocument,
     DocumentType,
     EventRecord,
     Evidence,
@@ -205,6 +206,15 @@ class ClaimsOpsEnv:
                 document = None
             if document and document not in self._workflow.documents_received:
                 self._workflow.documents_received.append(document)
+            for claim_document in self._platform_state.documents:
+                if claim_document.doc_type == document and claim_document.status == "requested":
+                    claim_document.status = "received"
+                    claim_document.evidence_id = evidence_id
+                    claim_document.confidence = "high" if document == DocumentType.POLICE_REPORT else "medium"
+                    claim_document.summary = f"Requested {doc_type} received and indexed."
+                    if document == DocumentType.POLICE_REPORT and self._spec.hidden.subrogation_expected:
+                        claim_document.issues.append("third_party_fault")
+                    break
             if not any(evidence.evidence_id == evidence_id for evidence in self._evidence):
                 flags = [doc_type]
                 if document in self._spec.hidden.required_documents:
@@ -251,6 +261,20 @@ class ClaimsOpsEnv:
                         flags=["supplement_received"],
                     )
                 )
+            self._platform_state.documents.append(
+                _claim_document(
+                    document_id="DOC-SUPPLEMENT",
+                    doc_type=DocumentType.REPAIR_ESTIMATE_BREAKDOWN,
+                    title="Repair facility supplement",
+                    source="vendor",
+                    status="received",
+                    evidence_id=evidence_id,
+                    confidence="medium",
+                    summary="Supplement/corrected estimate received from repair facility.",
+                    issues=["supplement_received"],
+                    related_object_id=self._spec.claim.estimate_id,
+                )
+            )
             record_summary = "Supplement received from repair facility."
         elif event_type == "valuation_complete":
             actual_cash_value = float(payload.get("actual_cash_value", 0.0))
@@ -267,6 +291,20 @@ class ClaimsOpsEnv:
                         flags=["valuation"],
                     )
                 )
+            self._platform_state.documents.append(
+                _claim_document(
+                    document_id="DOC-VALUATION",
+                    doc_type=DocumentType.REPAIR_ESTIMATE_BREAKDOWN,
+                    title="Total-loss valuation report",
+                    source="vendor",
+                    status="received",
+                    evidence_id="EV-VALUATION",
+                    confidence="high",
+                    summary="Valuation report received from total-loss vendor.",
+                    issues=["valuation"],
+                    related_object_id=self._spec.claim.estimate_id,
+                )
+            )
             record_summary = "Total-loss valuation report received."
         elif event_type == "authority_decision":
             approved = bool(payload.get("approved", True))
@@ -328,6 +366,7 @@ class ClaimsOpsEnv:
             payments=self._platform_state.payments,
             vendor_assignments=self._platform_state.vendor_assignments,
             claim_notes=self._platform_state.notes,
+            claim_documents=self._platform_state.documents,
             pending_events=self._platform_state.pending_events,
             event_history=self._platform_state.event_history,
             rental_days=self._platform_state.rental_days,
@@ -422,6 +461,8 @@ class ClaimsOpsEnv:
             gaps.append("claimant_not_updated")
         if not any(note.note_type.value == "closure" for note in self._platform_state.notes):
             gaps.append("closure_note_missing")
+        if any(document.status == "received" and document.issues for document in self._platform_state.documents):
+            gaps.append("document_review_needed")
         if self._platform_state.pending_events:
             gaps.append("pending_external_events")
         open_activities = [activity.activity_id for activity in self._platform_state.activities if _status_value(activity.status) in {"open", "overdue"}]
@@ -436,6 +477,7 @@ class ClaimsOpsEnv:
                 self._spec.claim.claimant_statement,
                 *(evidence.summary for evidence in self._evidence),
                 *(flag for evidence in self._evidence for flag in evidence.flags),
+                *(issue for document in self._platform_state.documents for issue in document.issues),
             ]
         ).lower()
         gaps: set[str] = set()
@@ -480,6 +522,7 @@ class ClaimsOpsEnv:
             approved_payment=self._financial.approved_payment,
             reserve_amount=self._financial.reserve_amount,
             platform_state=self._platform_state,
+            repair_estimate=self._spec.repair_estimate,
             action_log=self._action_log,
             evidence_ids={evidence.evidence_id for evidence in self._evidence},
             requested_documents=list(self._workflow.documents_requested),
@@ -516,3 +559,30 @@ def _complete_activity_by_category(platform_state: PlatformState, category: str,
             activity.status = ActivityStatus.COMPLETED
             activity.close_reason = reason
             return
+
+
+def _claim_document(
+    *,
+    document_id: str,
+    doc_type: DocumentType,
+    title: str,
+    source: str,
+    status: str,
+    evidence_id: str,
+    confidence: str,
+    summary: str,
+    issues: list[str],
+    related_object_id: str,
+) -> ClaimDocument:
+    return ClaimDocument(
+        document_id=document_id,
+        doc_type=doc_type,
+        title=title,
+        source=source,  # type: ignore[arg-type]
+        status=status,  # type: ignore[arg-type]
+        evidence_id=evidence_id,
+        confidence=confidence,  # type: ignore[arg-type]
+        summary=summary,
+        issues=issues,
+        related_object_id=related_object_id,
+    )
