@@ -44,6 +44,7 @@ claimsops-generate-sft = "training.generate_sft_data:main"
 claimsops-trace = "training.trace_episode:main"
 claimsops-calibrate = "training.calibrate_rewards:main"
 claimsops-run-suite = "training.run_suite:main"
+claimsops-local-baseline = "training.local_baseline:main"
 
 [tool.setuptools.packages.find]
 include = ["claimsops_env*", "server*", "training*"]

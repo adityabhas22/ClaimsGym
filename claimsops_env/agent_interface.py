@@ -277,6 +277,79 @@ def render_training_prompt(observation: Observation) -> str:
     return SYSTEM_PROMPT + "\n\n" + render_observation(observation)
 
 
+def compact_observation_dict(observation: Observation) -> dict[str, Any]:
+    """Strip low-signal fields so 4B models can keep multi-turn rollouts under budget.
+
+    The environment surfaces `latest_tool_result` every step, so event_history,
+    claim_diary, and redundant IDs do not need to be re-sent as history.
+    """
+
+    obs = observation.model_dump(mode="json")
+    compact = {
+        "claim_id": obs["claim_id"],
+        "policy_id": obs["policy_id"],
+        "customer_id": obs["customer_id"],
+        "vehicle_id": obs["vehicle_id"],
+        "estimate_id": obs["estimate_id"],
+        "claim_type": obs["claim_type"],
+        "loss_date": obs["loss_date"],
+        "reported_date": obs["reported_date"],
+        "requested_amount": obs["requested_amount"],
+        "claimant_statement": obs["claimant_statement"],
+        "remaining_steps": obs["remaining_steps"],
+        "latest_tool_result": obs.get("latest_tool_result"),
+        "visible_policy": obs.get("visible_policy"),
+        "coverage_result": obs.get("coverage_result"),
+        "appraisal_status": obs.get("appraisal_status"),
+        "rental_days": obs.get("rental_days", 0),
+        "storage_charges": obs.get("storage_charges", 0),
+        "alerts": obs.get("alerts", []),
+        "audit_gaps": obs.get("audit_gaps", []),
+        "workflow_affordances": obs.get("workflow_affordances"),
+        "open_tasks": obs.get("open_tasks", []),
+        "financial_snapshot": obs.get("financial_snapshot"),
+        "available_evidence": [
+            {"evidence_id": ev["evidence_id"], "kind": ev["kind"], "summary": ev["summary"], "flags": ev.get("flags", [])}
+            for ev in obs.get("available_evidence", [])
+        ],
+        "parties": [{"role": p["role"], "party_id": p["party_id"]} for p in obs.get("parties", [])],
+        "exposures": [
+            {"exposure_id": e["exposure_id"], "coverage": e["coverage"], "status": e["status"]}
+            for e in obs.get("exposures", [])
+        ],
+        "claim_documents": [
+            {"doc_type": d["doc_type"], "status": d["status"], "evidence_id": d.get("evidence_id"), "issues": d.get("issues", [])}
+            for d in obs.get("claim_documents", [])
+        ],
+        "pending_events": [
+            {"event_type": e["event_type"], "due_in_steps": e["due_in_steps"], "summary": e["summary"]}
+            for e in obs.get("pending_events", [])
+        ],
+    }
+    if obs.get("reserve_lines"):
+        compact["reserve_lines"] = [
+            {"cost_category": r["cost_category"], "amount": r["amount"], "approval_status": r["approval_status"]}
+            for r in obs["reserve_lines"]
+        ]
+    if obs.get("payments"):
+        compact["payments"] = [
+            {"amount": p["amount"], "status": p["status"], "payment_type": p["payment_type"]}
+            for p in obs["payments"]
+        ]
+    return compact
+
+
+def render_compact_prompt(observation: Observation) -> str:
+    """Compact per-turn user message. Action catalog goes in the system prompt once."""
+
+    return json.dumps(compact_observation_dict(observation), sort_keys=True, separators=(",", ":"))
+
+
+def render_system_prompt_with_catalog() -> str:
+    catalog_block = json.dumps(action_catalog_json(), sort_keys=True, separators=(",", ":"))
+    return SYSTEM_PROMPT + "\n\nAction catalog (JSON):\n" + catalog_block
+
+
 def parse_action_text(text: str) -> dict[str, Any] | str:
     stripped = text.strip()
     fenced = re.search(r"```(?:json)?\s*(.*?)```", stripped, flags=re.DOTALL | re.IGNORECASE)
