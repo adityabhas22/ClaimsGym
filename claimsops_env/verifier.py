@@ -29,6 +29,7 @@ class RewardContext:
     action_log: list[ActionRecord]
     evidence_ids: set[str]
     requested_documents: list[DocumentType | str]
+    received_documents: list[DocumentType | str]
     remaining_steps: int
     step_budget: int
     violations: list[str]
@@ -60,11 +61,15 @@ class WorkflowProgressReward:
         ]
         if context.hidden.required_documents:
             requested = {_doc_value(doc) for doc in context.requested_documents}
-            milestones.append({doc.value for doc in context.hidden.required_documents}.issubset(requested))
+            received = {_doc_value(doc) for doc in context.received_documents}
+            required = {doc.value for doc in context.hidden.required_documents}
+            milestones.append(required.issubset(requested))
+            milestones.append(required.issubset(received))
         if context.hidden.subrogation_expected:
             milestones.append(context.workflow.subrogation_opened)
         if context.hidden.authority_escalation_required:
             milestones.append(context.workflow.authority_requested)
+            milestones.append(context.workflow.authority_approved)
         return sum(1 for item in milestones if item) / len(milestones)
 
 
@@ -116,15 +121,18 @@ class EvidenceReward:
     def score(self, context: RewardContext) -> float:
         required = {doc.value for doc in context.hidden.required_documents}
         requested = {_doc_value(doc) for doc in context.requested_documents}
+        received = {_doc_value(doc) for doc in context.received_documents}
         if required:
-            completeness = len(required & requested) / len(required)
+            requested_score = len(required & requested) / len(required)
+            received_score = len(required & received) / len(required)
+            completeness = 0.6 * requested_score + 0.4 * received_score
         else:
             completeness = 1.0
         unnecessary = len(requested - required)
         premature_payment = bool(
             context.final_decision
             and context.final_decision.payment_amount > 0
-            and not required.issubset(requested)
+            and not required.issubset(received)
         )
         return max(0.0, completeness - 0.05 * unnecessary - (0.25 if premature_payment else 0.0))
 
@@ -146,6 +154,10 @@ class LeakageControlReward:
             score -= 0.5
         if context.hidden.expected_total_loss and not context.platform_state.valuation_received:
             score -= 0.25
+        if context.platform_state.storage_charges > 150:
+            score -= 0.1
+        if context.platform_state.rental_days > 2:
+            score -= 0.1
         if context.hidden.expected_payable == 0 and paid > 0:
             score -= 0.75
         return max(-1.0, score)
@@ -240,6 +252,8 @@ class ComplianceReward:
         score -= min(0.4, 0.2 * len(overdue))
         if context.final_decision and not context.workflow.claimant_updated:
             score -= 0.25
+        if context.final_decision and context.platform_state.pending_events:
+            score -= 0.35
         if "closed_with_open_activities" in context.violations:
             score -= 0.4
         return max(0.0, score)
@@ -254,6 +268,8 @@ class FinancialControlsReward:
         blocked = [payment for payment in context.platform_state.payments if payment.status == "blocked_authority"]
         if context.hidden.authority_escalation_required and not context.workflow.authority_requested:
             score -= 0.5
+        if context.hidden.authority_escalation_required and context.workflow.authority_requested and not context.workflow.authority_approved:
+            score -= 0.25
         if "authority_bypass" in context.violations:
             score -= 0.6
         if "payment_before_coverage" in context.violations:
@@ -397,12 +413,17 @@ def _safety_cap(context: RewardContext) -> float:
         cap = min(cap, 0.3)
     required = {doc.value for doc in context.hidden.required_documents}
     requested = {_doc_value(doc) for doc in context.requested_documents}
-    if decision.payment_amount > 0 and not required.issubset(requested):
+    received = {_doc_value(doc) for doc in context.received_documents}
+    if decision.payment_amount > 0 and not required.issubset(received):
         cap = min(cap, 0.5)
     if "fraud score" in decision.claimant_message.lower() or "siu score" in decision.claimant_message.lower():
         cap = min(cap, 0.4)
     if context.hidden.authority_escalation_required and not context.workflow.authority_requested:
         cap = min(cap, 0.6)
+    if context.hidden.authority_escalation_required and context.workflow.authority_requested and not context.workflow.authority_approved:
+        cap = min(cap, 0.75)
+    if context.platform_state.pending_events:
+        cap = min(cap, 0.85)
     if "closed_with_open_activities" in context.violations:
         cap = min(cap, 0.75)
     return cap

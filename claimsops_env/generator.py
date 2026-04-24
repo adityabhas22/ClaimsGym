@@ -19,11 +19,13 @@ from claimsops_env.models import (
     HiddenTruth,
     Incident,
     Party,
+    PendingEvent,
     PlatformState,
     Policy,
     RepairEstimate,
     ReserveBand,
 )
+from claimsops_env.scenario_templates import SCENARIO_FAMILIES, ScenarioTemplate, get_template
 
 
 @dataclass(frozen=True)
@@ -45,28 +47,14 @@ class ScenarioGenerator:
 
     def generate(self, seed: int | None = None) -> EpisodeSpec:
         rng = random.Random(seed)
-        family = rng.choice(
-            [
-                "covered_collision",
-                "comprehensive_deductible",
-                "policy_lapse",
-                "limit_exceeded",
-                "missing_police_report",
-                "prior_damage_leakage",
-                "duplicate_line_item",
-                "suspicious_inception",
-                "conflicting_statement",
-                "subrogation_opportunity",
-                "authority_threshold",
-                "total_loss",
-            ]
-        )
+        family = rng.choice(SCENARIO_FAMILIES)
         return self._build_family(family, rng)
 
     def generate_family(self, family: str, seed: int | None = None) -> EpisodeSpec:
         return self._build_family(family, random.Random(seed))
 
     def _build_family(self, family: str, rng: random.Random) -> EpisodeSpec:
+        template = get_template(family)
         suffix = rng.randint(1000, 9999)
         customer_id = f"CUST-{suffix}"
         vehicle_id = f"VIN-{rng.randint(10000, 99999)}"
@@ -82,89 +70,43 @@ class ScenarioGenerator:
         collision_limit = rng.choice([7500.0, 10000.0, 15000.0])
         comprehensive_limit = rng.choice([5000.0, 7500.0, 10000.0])
         authority_limit = rng.choice([6500.0, 8000.0])
-        claim_type = ClaimType.COLLISION
-        gross = float(rng.randint(3200, 8800))
-        unrelated = 0.0
-        duplicate = 0.0
-        required_docs: set[DocumentType] = set()
-        suspicious = False
-        subrogation = False
-        status = "active"
-        denial_clause = None
+        claim_type = ClaimType.COMPREHENSIVE if template.claim_type == "comprehensive" else ClaimType.COLLISION
+        gross = float(rng.randint(*template.gross_range))
+        unrelated = template.unrelated_damage
+        duplicate = template.duplicate_line
+        required_docs: set[DocumentType] = set(template.required_documents)
+        suspicious = template.suspicious
+        subrogation = template.subrogation
+        status = template.policy_status
+        denial_clause = template.denial_clause
         coverage_reason = "Active policy with covered auto physical damage loss."
-        statement = "I was hit while stopped at a light. The rear bumper and trunk are damaged."
-        prior_claims: list[str] = []
-        difficulty = 1
-        authority_escalation = False
-        notes: list[str] = []
-        expected_review = EstimateReviewDecision.APPROVE
-        expected_total_loss = False
-        liability_split = 0
-        photo_quality = "good"
-
-        if family == "comprehensive_deductible":
-            claim_type = ClaimType.COMPREHENSIVE
-            statement = "A tree branch fell during a storm and damaged the hood and windshield."
-            difficulty = 1
-        elif family == "policy_lapse":
-            status = "lapsed"
-            loss_date = expiration + timedelta(days=7)
-            denial_clause = "policy_period"
+        if denial_clause == "policy_period":
             coverage_reason = "Loss occurred after the policy expiration date."
-            difficulty = 1
+        elif denial_clause == "excluded_driver":
+            coverage_reason = "The reported driver is excluded under the policy driver exclusion."
+        statement = template.statement or "I was hit while stopped at a light. The rear bumper and trunk are damaged."
+        prior_claims: list[str] = list(template.prior_claims)
+        difficulty = template.level
+        authority_escalation = template.authority_escalation
+        notes: list[str] = list(template.visible_estimate_flags)
+        expected_review = template.expected_review
+        expected_total_loss = template.expected_total_loss
+        liability_split = template.liability_split_insured_pct
+        photo_quality = template.photo_quality
+
+        if family == "policy_lapse":
+            loss_date = expiration + timedelta(days=7)
         elif family == "limit_exceeded":
             gross = collision_limit + rng.randint(1500, 3500)
-            notes.append("Estimate exceeds collision coverage limit.")
-            difficulty = 1
-        elif family == "missing_police_report":
-            required_docs.add(DocumentType.POLICE_REPORT)
-            statement = "A third-party vehicle backed into my car in a parking lot; report number is pending."
-            subrogation = True
-            liability_split = 0
-            difficulty = 2
-        elif family == "prior_damage_leakage":
-            unrelated = 1100.0
-            required_docs.add(DocumentType.REPAIR_ESTIMATE_BREAKDOWN)
-            prior_claims.append("Prior left quarter-panel damage paid 2025-11-04.")
-            notes.append("Left quarter-panel line appears unrelated to described rear impact.")
-            expected_review = EstimateReviewDecision.ESCALATE_FIELD
-            difficulty = 3
-        elif family == "duplicate_line_item":
-            duplicate = 425.0
-            required_docs.add(DocumentType.REPAIR_ESTIMATE_BREAKDOWN)
-            notes.append("Paint materials line appears duplicated.")
-            expected_review = EstimateReviewDecision.REQUEST_SUPPLEMENT
-            difficulty = 3
         elif family == "suspicious_inception":
             effective = loss_date - timedelta(days=2)
-            suspicious = True
-            required_docs.add(DocumentType.POLICE_REPORT)
-            notes.append("Loss reported shortly after policy inception.")
-            expected_review = EstimateReviewDecision.REQUEST_PHOTOS
-            photo_quality = "partial"
-            difficulty = 4
-        elif family == "conflicting_statement":
-            suspicious = True
-            statement = "I was parked when another car struck the front bumper."
-            notes.append("Telematics indicates vehicle was moving at impact.")
-            expected_review = EstimateReviewDecision.ESCALATE_FIELD
-            difficulty = 4
-        elif family == "subrogation_opportunity":
-            subrogation = True
-            statement = "I was rear-ended by another driver who admitted fault at the scene."
-            liability_split = 0
-            difficulty = 5
         elif family == "authority_threshold":
             gross = authority_limit + rng.randint(800, 1800)
-            authority_escalation = True
-            difficulty = 5
         elif family == "total_loss":
             gross = float(rng.randint(12000, 14500))
             collision_limit = max(collision_limit, 15000.0)
-            expected_review = EstimateReviewDecision.CONFIRM_TOTAL_LOSS
-            expected_total_loss = True
-            statement = "The vehicle has severe front-end damage and the tow yard says it may be a total loss."
-            difficulty = 5
+        elif family == "excluded_driver":
+            status = "active"
 
         policy = Policy(
             policy_id=policy_id,
@@ -179,8 +121,10 @@ class ScenarioGenerator:
             authority_limit=authority_limit,
             exclusions=["wear_and_tear", "intentional_loss", "commercial_use"],
         )
+        if family == "excluded_driver":
+            policy.exclusions.append("excluded_driver")
         covered_amount = max(0.0, gross - unrelated - duplicate)
-        if status != "active" or not (policy.effective_date <= loss_date <= policy.expiration_date):
+        if denial_clause or status != "active" or not (policy.effective_date <= loss_date <= policy.expiration_date):
             is_covered = False
             expected_payable = 0.0
         else:
@@ -202,7 +146,7 @@ class ScenarioGenerator:
                 flags=notes,
             ),
         ]
-        if family == "conflicting_statement":
+        if template.telematics_conflict:
             evidence.append(
                 Evidence(
                     evidence_id="EV-TELEMATICS",
@@ -211,7 +155,7 @@ class ScenarioGenerator:
                     flags=["statement_conflict"],
                 )
             )
-        if family in {"subrogation_opportunity", "missing_police_report"}:
+        if template.needs_police_evidence:
             evidence.append(
                 Evidence(
                     evidence_id="EV-POLICE-AVAILABLE",
@@ -258,6 +202,7 @@ class ScenarioGenerator:
             subrogation=subrogation,
             suspicious=suspicious,
             expected_total_loss=expected_total_loss,
+            template=template,
         )
         min_reserve = max(500.0, expected_payable * 0.85 if expected_payable else gross * 0.5)
         max_reserve = max(min_reserve + 250.0, expected_payable * 1.25 if expected_payable else gross * 1.1)
@@ -304,6 +249,7 @@ class ScenarioGenerator:
         subrogation: bool,
         suspicious: bool,
         expected_total_loss: bool,
+        template: ScenarioTemplate,
     ) -> PlatformState:
         insured = Party(
             party_id=claim.customer_id,
@@ -314,6 +260,7 @@ class ScenarioGenerator:
             party_id="PTY-CLAIMANT",
             role="claimant",
             display_name="Synthetic Claimant",
+            contact_status=template.contact_status,  # type: ignore[arg-type]
         )
         parties = [insured, claimant]
         if subrogation:
@@ -407,11 +354,33 @@ class ScenarioGenerator:
                     related_object_id=exposure.exposure_id,
                 )
             )
+        for category in template.extra_activity_categories:
+            activities.append(
+                Activity(
+                    activity_id=f"ACT-{category.upper().replace('_', '-')}",
+                    subject=f"Manage {category.replace('_', ' ')} exposure and leakage",
+                    category=category,
+                    due_in_steps=2,
+                    priority="high" if category in {"towing_storage", "rental"} else "normal",
+                    related_object_id=claim.claim_id,
+                )
+            )
+        pending_events = [
+            PendingEvent(
+                event_id=f"EVT-{profile.upper().replace('_', '-')}-001",
+                event_type=profile,  # type: ignore[arg-type]
+                due_in_steps=1,
+                summary=f"System will update {profile.replace('_', ' ')} if no action is taken.",
+                payload={"source": "scenario_profile"},
+            )
+            for profile in template.initial_event_profiles
+        ]
         return PlatformState(
             parties=parties,
             incidents=[incident],
             exposures=[exposure],
             activities=activities,
+            pending_events=pending_events,
             appraisal_status=AppraisalStatus.NOT_ASSIGNED,
         )
 

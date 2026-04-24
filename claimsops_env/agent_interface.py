@@ -49,7 +49,7 @@ ACTION_CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name=ToolName.REQUEST_DOCUMENT.value,
-        description="Request a missing document needed for claim handling.",
+        description="Request a missing document needed for claim handling; receipt is scheduled as a later event.",
         required_args=["doc_type", "reason"],
     ),
     ToolSpec(
@@ -76,7 +76,7 @@ ACTION_CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name=ToolName.ASSIGN_APPRAISAL.value,
-        description="Assign photo, field, or shop appraisal for the vehicle damage.",
+        description="Assign photo, field, or shop appraisal for the vehicle damage; vendor completion is scheduled as a later event.",
         required_args=["claim_id", "method"],
     ),
     ToolSpec(
@@ -86,7 +86,7 @@ ACTION_CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name=ToolName.REQUEST_VALUATION.value,
-        description="Request total-loss valuation when damage approaches the threshold.",
+        description="Request total-loss valuation when damage approaches the threshold; the valuation report arrives as a later event.",
         required_args=["claim_id", "reason"],
     ),
     ToolSpec(
@@ -108,7 +108,7 @@ ACTION_CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name=ToolName.REQUEST_AUTHORITY_APPROVAL.value,
-        description="Request and record approval when reserve or payment exceeds adjuster authority.",
+        description="Request manager approval when reserve or payment exceeds adjuster authority; approval arrives as a later event.",
         required_args=["amount", "rationale"],
         optional_args=["exposure_id"],
     ),

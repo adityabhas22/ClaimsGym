@@ -14,6 +14,7 @@ ClaimsOps Gym is a synthetic, stateful claims operations simulator. One episode 
 ## Core Modules
 
 - `claimsops_env.models`: Pydantic contracts for policies, claims, evidence, observations, actions, final decisions, and reward breakdowns.
+- `claimsops_env.scenario_templates`: typed scenario-template catalog with visible clues, workflow rubrics, document requirements, authority/SIU/subrogation labels, and initial event profiles.
 - `claimsops_env.generator`: seeded scenario generator for claim families, visible claim-platform state, and hidden verifier labels.
 - `claimsops_env.tools`: tool registry and state-mutating tool handlers.
 - `claimsops_env.verifier`: composable reward component classes and safety caps.
@@ -27,7 +28,7 @@ ClaimsOps Gym is a synthetic, stateful claims operations simulator. One episode 
 
 ## Extension Points
 
-Add a new claim scenario by extending `ScenarioGenerator._build_family`, then add a focused reward test that proves the hidden label is not exposed and the expected behavior scores higher than the wrong behavior.
+Add a new claim scenario by adding a `ScenarioTemplate`, then wire only the family-specific mechanics that cannot be expressed declaratively in `ScenarioGenerator._build_family`. Add a focused reward test that proves the hidden label is not exposed and the expected behavior scores higher than the wrong behavior.
 
 Add a new tool by creating a `ToolHandler`, adding its args model, registering it in `build_tool_registry`, and adding at least one transition test. Tools are the only place where environment state should mutate.
 
@@ -48,9 +49,40 @@ The simulator now exposes a claim-system style file rather than a flat adjudicat
 - vendor/appraisal assignments
 - claim notes
 - appraisal and estimate-review status
+- pending external events and resolved event history
+- rental days and storage charges for visible leakage pressure
 - alerts and audit gaps derived from visible facts
 
 Hidden truth remains separate: expected payout, fraud truth, true leakage, required evidence, total-loss expectation, and authority requirements are used only by verifiers.
+
+## Event Simulation
+
+The simulator has a lightweight operational event engine. Tools can schedule
+pending events in `PlatformState.pending_events`; the environment decrements
+them each step and resolves them into visible platform state.
+
+Current event types:
+
+- `document_arrival`
+- `appraisal_complete`
+- `supplement_received`
+- `valuation_complete`
+- `authority_decision`
+- `claimant_response`
+- `rental_day_accrual`
+- `storage_fee_accrual`
+
+This avoids the common benchmark failure mode where every tool is an immediate
+oracle. The agent must request a missing item, keep working, wait when needed,
+and only finalize after the returned evidence is visible.
+
+## Scenario Families
+
+The catalog currently covers straight-through coverage, comprehensive losses,
+policy lapse, limit caps, missing evidence, ownership gaps, prior damage,
+duplicate estimate lines, rental/storage leakage, suspicious inception,
+statement conflicts, excluded-driver denials, subrogation, authority
+thresholds, and total-loss valuation.
 
 ## Training Direction
 

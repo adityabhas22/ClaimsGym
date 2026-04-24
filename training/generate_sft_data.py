@@ -4,23 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
-from claimsops_env.agent_interface import RolloutRunner, SYSTEM_PROMPT, render_observation
+from claimsops_env.agent_interface import RolloutRunner, SYSTEM_PROMPT
 from claimsops_env.policies import ScriptedBaselinePolicy
-
-
-SCENARIO_FAMILIES = [
-    "covered_collision",
-    "comprehensive_deductible",
-    "policy_lapse",
-    "limit_exceeded",
-    "missing_police_report",
-    "prior_damage_leakage",
-    "duplicate_line_item",
-    "suspicious_inception",
-    "conflicting_statement",
-    "subrogation_opportunity",
-    "authority_threshold",
-]
+from claimsops_env.scenario_templates import SCENARIO_FAMILIES
 
 
 def main() -> None:

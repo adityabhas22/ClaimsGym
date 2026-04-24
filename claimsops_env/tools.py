@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -18,10 +18,10 @@ from claimsops_env.models import (
     EvidenceKind,
     Exposure,
     ExposureStatus,
-    Evidence,
     FinalDecision,
     NoteType,
     Payment,
+    PendingEvent,
     ReserveLine,
     ReserveBand,
     ToolName,
@@ -256,31 +256,27 @@ class RequestDocumentTool(ToolHandler):
 
     def run(self, runtime: RuntimeView, args: dict[str, Any]) -> ToolResult:
         parsed = RequestDocumentArgs.model_validate(args)
-        runtime.workflow.documents_requested.append(parsed.doc_type)
-        if parsed.doc_type not in runtime.workflow.documents_received:
-            runtime.workflow.documents_received.append(parsed.doc_type)
-        if parsed.doc_type in runtime.spec.hidden.required_documents:
-            runtime.evidence.append(
-                Evidence(
-                    evidence_id=f"EV-DOC-{parsed.doc_type.value.upper()}",
-                    kind=EvidenceKind.REQUESTED_DOCUMENT,
-                    summary=f"Requested {parsed.doc_type.value} received and added to file.",
-                )
+        if parsed.doc_type not in runtime.workflow.documents_requested:
+            runtime.workflow.documents_requested.append(parsed.doc_type)
+        evidence_id = f"EV-DOC-{parsed.doc_type.value.upper()}"
+        if parsed.doc_type not in runtime.workflow.documents_received and not _pending_event(
+            runtime, "document_arrival", doc_type=parsed.doc_type.value
+        ):
+            _schedule_event(
+                runtime,
+                "document_arrival",
+                f"Requested {parsed.doc_type.value} is pending from claimant/vendor.",
+                {
+                    "doc_type": parsed.doc_type.value,
+                    "evidence_id": evidence_id,
+                },
+                due_in_steps=2,
             )
-            summary = f"{parsed.doc_type.value} requested and received."
-        else:
-            runtime.evidence.append(
-                Evidence(
-                    evidence_id=f"EV-DOC-{parsed.doc_type.value.upper()}",
-                    kind=EvidenceKind.REQUESTED_DOCUMENT,
-                    summary=f"Requested {parsed.doc_type.value} received; no material discrepancy identified.",
-                )
-            )
-            summary = f"{parsed.doc_type.value} requested and received."
+        summary = f"{parsed.doc_type.value} requested; awaiting receipt."
         runtime.diary.append(f"Document request: {parsed.doc_type.value}. Reason: {parsed.reason}")
         if parsed.doc_type == DocumentType.POLICE_REPORT:
             _complete_activity(runtime, "coverage", "police report requested")
-        return ToolResult(ok=True, summary=summary, data={"doc_type": parsed.doc_type.value})
+        return ToolResult(ok=True, summary=summary, data={"doc_type": parsed.doc_type.value, "status": "pending"})
 
 
 class QueryPriorClaimsTool(ToolHandler):
@@ -407,6 +403,13 @@ class AssignAppraisalTool(ToolHandler):
                 notes=f"{parsed.method} appraisal assigned",
             )
         )
+        _schedule_event(
+            runtime,
+            "appraisal_complete",
+            f"{parsed.method.title()} appraisal assignment is pending vendor completion.",
+            {"method": parsed.method, "vendor_id": f"VND-{parsed.method.upper()}-APPRAISER"},
+            due_in_steps=2 if parsed.method == "photo" else 3,
+        )
         runtime.diary.append(f"{parsed.method.title()} appraisal assigned.")
         return ToolResult(ok=True, summary="Appraisal assigned.", data={"method": parsed.method})
 
@@ -430,13 +433,12 @@ class ReviewEstimateTool(ToolHandler):
             else AppraisalStatus.ESTIMATE_REVIEWED
         )
         if parsed.action == EstimateReviewDecision.REQUEST_SUPPLEMENT:
-            runtime.evidence.append(
-                Evidence(
-                    evidence_id="EV-SUPPLEMENT-REQUEST",
-                    kind=EvidenceKind.REQUESTED_DOCUMENT,
-                    summary="Supplement request sent to repair facility for estimate clarification.",
-                    flags=["supplement_requested"],
-                )
+            _schedule_event(
+                runtime,
+                "supplement_received",
+                "Repair facility supplement or corrected estimate is pending.",
+                {"evidence_id": "EV-SUPPLEMENT-RECEIVED"},
+                due_in_steps=2,
             )
         if parsed.action == EstimateReviewDecision.CONFIRM_TOTAL_LOSS:
             runtime.platform_state.valuation_requested = True
@@ -457,21 +459,22 @@ class RequestValuationTool(ToolHandler):
         if parsed.claim_id != runtime.spec.claim.claim_id:
             raise ToolError("claim_id does not match this claim file")
         runtime.platform_state.valuation_requested = True
-        runtime.platform_state.valuation_received = True
-        runtime.workflow.valuation_seen = True
-        runtime.platform_state.appraisal_status = AppraisalStatus.VALUATION_RECEIVED
         actual_cash_value = max(runtime.spec.hidden.expected_payable + runtime.spec.policy.deductible, runtime.spec.repair_estimate.covered_amount * 0.82)
-        runtime.evidence.append(
-            Evidence(
-                evidence_id="EV-VALUATION",
-                kind=EvidenceKind.REQUESTED_DOCUMENT,
-                summary=f"Total-loss valuation report estimates ACV at ${actual_cash_value:,.2f}.",
-                amount=round(actual_cash_value, 2),
-                flags=["valuation"],
+        if not _pending_event(runtime, "valuation_complete"):
+            _schedule_event(
+                runtime,
+                "valuation_complete",
+                "Total-loss valuation is pending from valuation vendor.",
+                {"actual_cash_value": round(actual_cash_value, 2)},
+                due_in_steps=2,
             )
-        )
+        runtime.platform_state.appraisal_status = AppraisalStatus.TOTAL_LOSS_REVIEW
         runtime.diary.append(f"Valuation requested. Reason: {parsed.reason}")
-        return ToolResult(ok=True, summary="Valuation report received.", data={"actual_cash_value": round(actual_cash_value, 2)})
+        return ToolResult(
+            ok=True,
+            summary="Valuation requested; awaiting report.",
+            data={"status": "pending", "estimated_actual_cash_value": round(actual_cash_value, 2)},
+        )
 
 
 class SetReserveTool(ToolHandler):
@@ -559,12 +562,17 @@ class RequestAuthorityApprovalTool(ToolHandler):
         parsed = RequestAuthorityApprovalArgs.model_validate(args)
         _require_exposure(runtime, parsed.exposure_id)
         runtime.platform_state.authority_requested = True
-        runtime.platform_state.authority_approved = True
         runtime.workflow.authority_requested = True
-        runtime.workflow.authority_approved = True
-        _complete_activity(runtime, "authority", "authority approval requested and approved")
-        runtime.diary.append(f"Authority approval granted for ${parsed.amount:,.2f}. Rationale: {parsed.rationale}")
-        return ToolResult(ok=True, summary="Authority approval granted.", data={"amount": parsed.amount, "approved": True})
+        if not _pending_event(runtime, "authority_decision"):
+            _schedule_event(
+                runtime,
+                "authority_decision",
+                "Manager authority decision is pending.",
+                {"amount": parsed.amount, "approved": True},
+                due_in_steps=2,
+            )
+        runtime.diary.append(f"Authority approval requested for ${parsed.amount:,.2f}. Rationale: {parsed.rationale}")
+        return ToolResult(ok=True, summary="Authority approval requested.", data={"amount": parsed.amount, "approved": False, "status": "pending"})
 
 
 class ReferToSiuTool(ToolHandler):
@@ -725,6 +733,35 @@ def validate_action(raw_action: dict[str, Any] | Action) -> Action:
         return Action.model_validate(raw_action)
     except ValidationError as exc:
         raise ToolError(str(exc)) from exc
+
+
+def _schedule_event(
+    runtime: RuntimeView,
+    event_type: str,
+    summary: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    due_in_steps: int,
+) -> None:
+    event_id = f"EVT-{len(runtime.platform_state.pending_events) + len(runtime.platform_state.event_history) + 1:03d}"
+    runtime.platform_state.pending_events.append(
+        PendingEvent(
+            event_id=event_id,
+            event_type=event_type,  # type: ignore[arg-type]
+            due_in_steps=due_in_steps,
+            summary=summary,
+            payload=payload or {},
+        )
+    )
+
+
+def _pending_event(runtime: RuntimeView, event_type: str, **payload_filters: str) -> bool:
+    for event in runtime.platform_state.pending_events:
+        if event.event_type != event_type:
+            continue
+        if all(str(event.payload.get(key)) == value for key, value in payload_filters.items()):
+            return True
+    return False
 
 
 def _find_exposure(runtime: RuntimeView, exposure_id: str) -> Exposure | None:

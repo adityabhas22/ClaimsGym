@@ -51,3 +51,21 @@ def test_open_tasks_do_not_reveal_hidden_required_documents() -> None:
     observation = env.reset(seed=1, scenario_family="suspicious_inception")
 
     assert "request_police_report" not in observation.open_tasks
+
+
+def test_pending_events_do_not_expose_hidden_labels() -> None:
+    env = ClaimsOpsEnv()
+    env.reset(seed=1, scenario_family="missing_police_report")
+    result = env.step(
+        {
+            "tool": "request_document",
+            "args": {"doc_type": "police_report", "reason": "Needed for liability review."},
+        }
+    )
+
+    text = str(result.observation.model_dump(mode="json")).lower()
+
+    assert "expected_payable" not in text
+    assert "required_documents" not in text
+    assert "fraud_suspicious" not in text
+    assert "hidden" not in text

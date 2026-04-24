@@ -29,6 +29,7 @@ The server exposes:
 claimsops_env/
   agent_interface.py
   models.py
+  scenario_templates.py
   generator.py
   tools.py
   verifier.py
@@ -59,6 +60,12 @@ configs/
 ## Reward Columns
 
 Rewards are logged as separate components: workflow progress, coverage, payout, evidence, leakage control, fraud triage, subrogation, communication, reserve, compliance, financial controls, efficiency, audit trail, penalties, and safety cap.
+
+## Environment Depth
+
+Scenario templates now cover 15+ realistic auto physical-damage workflows, including missing evidence, ownership gaps, prior damage, duplicate estimate lines, rental/storage leakage, SIU triage, subrogation, authority approval, excluded-driver denial, and total loss valuation.
+
+Several tools schedule pending operational events instead of instantly returning answers. Requested documents, appraisals, supplements, valuations, and authority decisions arrive on later steps and are exposed through the observation as pending events and event history.
 
 See `CODEX.md` for the full project brief and extension plan.
 

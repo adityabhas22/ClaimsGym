@@ -23,19 +23,30 @@ This fits the World Modeling / Professional Tasks theme: long-horizon workflow, 
 
 Personal auto physical damage claims only. Avoid health insurance and real consumer data. All data is synthetic.
 
-Current scenario families include:
+Current scenario families live in `claimsops_env.scenario_templates` and include:
 
 - Active covered collision.
 - Comprehensive claim with deductible.
 - Policy lapse.
 - Coverage limit exceeded.
 - Missing police report.
+- Incomplete first notice facts.
+- Ownership / insurable-interest gap.
 - Prior damage leakage.
 - Duplicate estimate line.
+- Rental, towing, and storage leakage pressure.
 - Suspicious policy inception timing.
 - Statement conflict with telematics.
+- Named-driver exclusion.
 - Third-party subrogation opportunity.
 - Authority threshold escalation.
+- Possible total loss with valuation and salvage.
+
+The generator consumes typed scenario templates instead of burying all domain
+rubrics inside random branches. Each template names the visible facts,
+operational tasks, required evidence, expected estimate review, fraud/SIU
+signal, subrogation expectation, authority posture, and any initial platform
+events.
 
 ## Environment Contract
 
@@ -51,6 +62,13 @@ Actions use strict JSON:
 ```
 
 The initial observation is compact and includes the visible claim file, available evidence, open tasks, latest tool result, financial snapshot, available tools, and remaining steps. It does not include hidden labels such as expected payout, fraud truth, or expected coverage outcome.
+
+Observations also expose realistic platform state:
+
+- pending external events, such as document arrival, appraisal completion, valuation reports, and authority decisions
+- event history
+- visible storage/rental leakage counters
+- alerts and audit gaps derived from visible facts
 
 ## Tool Design
 
@@ -83,6 +101,14 @@ The tool registry is intentionally claim-platform shaped for the MVP:
 
 Each tool owns its argument schema and mutation logic. Environment state should not be mutated outside tools except for step accounting, action logging, and terminal state.
 
+Several tools intentionally schedule events rather than completing work
+immediately. `request_document`, `assign_appraisal`, `request_valuation`,
+`review_estimate` with supplement, and `request_authority_approval` place
+pending events into the claim file. The environment advances those events on
+subsequent steps. This gives the model a real workflow problem: continue useful
+work while waiting, then incorporate returned documents and reports before
+closure.
+
 ## Reward Design
 
 The scalar reward is only the reporting aggregate. The real design surface is the independent reward columns:
@@ -106,9 +132,16 @@ The scalar reward is only the reporting aggregate. The real design surface is th
 
 Safety caps currently cover overpayment, premature payment before required evidence, denial of a covered claim without investigation, claimant-facing fraud-score disclosure, fabricated evidence IDs, hidden-state probing, and repeated invalid actions.
 
+Evidence reward now separates requested documents from received documents.
+Requesting the right document helps, but final payment before the document
+arrives remains capped. Compliance and leakage rewards also account for
+pending external events, authority approval state, rental days, and storage
+charges.
+
 ## Extensibility Rules
 
-Add scenario depth through the generator and hidden rubric, not by hardcoding policy behavior into the trainer.
+Add scenario depth through `claimsops_env.scenario_templates`, the generator,
+and the hidden rubric, not by hardcoding policy behavior into the trainer.
 
 Add workflow realism through visible operational affordances such as tasks, blockers, required document statuses, and financial snapshots. This is fair because real adjusters use claim systems that surface this structure.
 

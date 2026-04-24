@@ -34,6 +34,7 @@ class EvidenceKind(str, Enum):
     REQUESTED_DOCUMENT = "requested_document"
     FRAUD_REPORT = "fraud_report"
     POLICY = "policy"
+    VENDOR_REPORT = "vendor_report"
 
 
 class Decision(str, Enum):
@@ -236,6 +237,30 @@ class ClaimNote(BaseModel):
     related_object_id: str | None = None
 
 
+class PendingEvent(BaseModel):
+    event_id: str
+    event_type: Literal[
+        "document_arrival",
+        "appraisal_complete",
+        "valuation_complete",
+        "authority_decision",
+        "claimant_response",
+        "supplement_received",
+        "rental_day_accrual",
+        "storage_fee_accrual",
+    ]
+    due_in_steps: int = Field(ge=0)
+    summary: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class EventRecord(BaseModel):
+    event_id: str
+    event_type: str
+    summary: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class PlatformState(BaseModel):
     parties: list[Party] = Field(default_factory=list)
     incidents: list[Incident] = Field(default_factory=list)
@@ -245,6 +270,10 @@ class PlatformState(BaseModel):
     payments: list[Payment] = Field(default_factory=list)
     vendor_assignments: list[VendorAssignment] = Field(default_factory=list)
     notes: list[ClaimNote] = Field(default_factory=list)
+    pending_events: list[PendingEvent] = Field(default_factory=list)
+    event_history: list[EventRecord] = Field(default_factory=list)
+    rental_days: int = Field(default=0, ge=0)
+    storage_charges: float = Field(default=0, ge=0)
     appraisal_status: AppraisalStatus = AppraisalStatus.NOT_ASSIGNED
     estimate_review_decision: EstimateReviewDecision | None = None
     valuation_requested: bool = False
@@ -361,6 +390,10 @@ class Observation(BaseModel):
     payments: list[Payment] = Field(default_factory=list)
     vendor_assignments: list[VendorAssignment] = Field(default_factory=list)
     claim_notes: list[ClaimNote] = Field(default_factory=list)
+    pending_events: list[PendingEvent] = Field(default_factory=list)
+    event_history: list[EventRecord] = Field(default_factory=list)
+    rental_days: int = 0
+    storage_charges: float = 0.0
     appraisal_status: AppraisalStatus = AppraisalStatus.NOT_ASSIGNED
     coverage_result: dict[str, Any] | None = None
     alerts: list[str] = Field(default_factory=list)

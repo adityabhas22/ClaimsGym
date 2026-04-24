@@ -10,7 +10,11 @@ from claimsops_env.generator import EpisodeSpec, ScenarioGenerator
 from claimsops_env.models import (
     ActionRecord,
     ActivityStatus,
+    AppraisalStatus,
     DocumentType,
+    EventRecord,
+    Evidence,
+    EvidenceKind,
     FinancialSnapshot,
     Observation,
     PlatformState,
@@ -112,6 +116,7 @@ class ClaimsOpsEnv:
         if self._remaining_steps == 0:
             terminal = True
         self._advance_activities()
+        self._advance_events()
 
         self._action_log.append(
             ActionRecord(
@@ -176,6 +181,116 @@ class ClaimsOpsEnv:
                 if activity.due_in_steps == 0:
                     activity.status = ActivityStatus.OVERDUE
 
+    def _advance_events(self) -> None:
+        resolved_ids: set[str] = set()
+        for event in self._platform_state.pending_events:
+            event.due_in_steps = max(0, event.due_in_steps - 1)
+            if event.due_in_steps > 0:
+                continue
+            self._resolve_event(event.event_type, event.event_id, event.summary, event.payload)
+            resolved_ids.add(event.event_id)
+        if resolved_ids:
+            self._platform_state.pending_events = [
+                event for event in self._platform_state.pending_events if event.event_id not in resolved_ids
+            ]
+
+    def _resolve_event(self, event_type: str, event_id: str, summary: str, payload: dict[str, Any]) -> None:
+        record_summary = summary
+        if event_type == "document_arrival":
+            doc_type = str(payload.get("doc_type", "requested_document"))
+            evidence_id = str(payload.get("evidence_id") or f"EV-DOC-{doc_type.upper()}")
+            try:
+                document = DocumentType(doc_type)
+            except ValueError:
+                document = None
+            if document and document not in self._workflow.documents_received:
+                self._workflow.documents_received.append(document)
+            if not any(evidence.evidence_id == evidence_id for evidence in self._evidence):
+                flags = [doc_type]
+                if document in self._spec.hidden.required_documents:
+                    flags.append("document_received")
+                if document == DocumentType.POLICE_REPORT and self._spec.hidden.subrogation_expected:
+                    flags.append("third_party_fault")
+                kind = EvidenceKind.POLICE_REPORT if document == DocumentType.POLICE_REPORT else EvidenceKind.REQUESTED_DOCUMENT
+                self._evidence.append(
+                    Evidence(
+                        evidence_id=evidence_id,
+                        kind=kind,
+                        summary=f"Requested {doc_type} received and added to the claim file.",
+                        flags=flags,
+                    )
+                )
+            record_summary = f"Document received: {doc_type}."
+        elif event_type == "appraisal_complete":
+            vendor_id = str(payload.get("vendor_id", ""))
+            method = str(payload.get("method", "vendor"))
+            for assignment in self._platform_state.vendor_assignments:
+                if assignment.vendor_id == vendor_id or not vendor_id:
+                    assignment.status = "completed"
+                    assignment.eta_steps = 0
+                    break
+            evidence_id = f"EV-APPRAISAL-{len(self._platform_state.event_history) + 1:03d}"
+            if not any(evidence.evidence_id == evidence_id for evidence in self._evidence):
+                self._evidence.append(
+                    Evidence(
+                        evidence_id=evidence_id,
+                        kind=EvidenceKind.VENDOR_REPORT,
+                        summary=f"{method.title()} appraisal vendor completed damage review.",
+                        flags=["appraisal_complete", method],
+                    )
+                )
+            record_summary = f"Appraisal completed: {method}."
+        elif event_type == "supplement_received":
+            evidence_id = str(payload.get("evidence_id", "EV-SUPPLEMENT-RECEIVED"))
+            if not any(evidence.evidence_id == evidence_id for evidence in self._evidence):
+                self._evidence.append(
+                    Evidence(
+                        evidence_id=evidence_id,
+                        kind=EvidenceKind.REQUESTED_DOCUMENT,
+                        summary="Repair facility returned a supplement/corrected estimate for review.",
+                        flags=["supplement_received"],
+                    )
+                )
+            record_summary = "Supplement received from repair facility."
+        elif event_type == "valuation_complete":
+            actual_cash_value = float(payload.get("actual_cash_value", 0.0))
+            self._platform_state.valuation_received = True
+            self._workflow.valuation_seen = True
+            self._platform_state.appraisal_status = AppraisalStatus.VALUATION_RECEIVED
+            if not any(evidence.evidence_id == "EV-VALUATION" for evidence in self._evidence):
+                self._evidence.append(
+                    Evidence(
+                        evidence_id="EV-VALUATION",
+                        kind=EvidenceKind.REQUESTED_DOCUMENT,
+                        summary=f"Total-loss valuation report estimates ACV at ${actual_cash_value:,.2f}.",
+                        amount=round(actual_cash_value, 2),
+                        flags=["valuation"],
+                    )
+                )
+            record_summary = "Total-loss valuation report received."
+        elif event_type == "authority_decision":
+            approved = bool(payload.get("approved", True))
+            self._platform_state.authority_approved = approved
+            self._workflow.authority_approved = approved
+            if approved:
+                _complete_activity_by_category(self._platform_state, "authority", "authority approval received")
+            record_summary = "Authority approval received." if approved else "Authority approval declined."
+        elif event_type == "claimant_response":
+            for party in self._platform_state.parties:
+                if party.role == "claimant":
+                    party.contact_status = "reachable"
+                    break
+            record_summary = "Claimant response received."
+        elif event_type == "rental_day_accrual":
+            self._platform_state.rental_days += 1
+            record_summary = f"Rental day accrued; open rental days={self._platform_state.rental_days}."
+        elif event_type == "storage_fee_accrual":
+            self._platform_state.storage_charges = round(self._platform_state.storage_charges + 75.0, 2)
+            record_summary = f"Storage fee accrued; total storage=${self._platform_state.storage_charges:,.2f}."
+        self._platform_state.event_history.append(
+            EventRecord(event_id=event_id, event_type=event_type, summary=record_summary, payload=payload)
+        )
+
     def _apply_runtime(self, runtime: RuntimeView) -> None:
         self._visible_policy = runtime.visible_policy
         self._evidence = runtime.evidence
@@ -213,6 +328,10 @@ class ClaimsOpsEnv:
             payments=self._platform_state.payments,
             vendor_assignments=self._platform_state.vendor_assignments,
             claim_notes=self._platform_state.notes,
+            pending_events=self._platform_state.pending_events,
+            event_history=self._platform_state.event_history,
+            rental_days=self._platform_state.rental_days,
+            storage_charges=self._platform_state.storage_charges,
             appraisal_status=self._platform_state.appraisal_status,
             coverage_result=self._platform_state.coverage_result,
             alerts=self._alerts(),
@@ -238,11 +357,14 @@ class ClaimsOpsEnv:
             tasks.append("inspect_estimate")
         if self._workflow.estimate_seen and not self._workflow.estimate_reviewed:
             tasks.append("review_estimate")
-        if "near_total_loss_threshold" in self._alerts() and not self._workflow.valuation_seen:
+        if "near_total_loss_threshold" in self._alerts() and not self._platform_state.valuation_requested:
             tasks.append("request_valuation")
         visible_doc_gaps = self._visible_document_gaps()
         received = {_doc_value(doc) for doc in self._workflow.documents_received}
-        tasks.extend(f"request_{doc}" for doc in sorted(visible_doc_gaps - received))
+        requested = {_doc_value(doc) for doc in self._workflow.documents_requested}
+        tasks.extend(f"request_{doc}" for doc in sorted(visible_doc_gaps - received - requested))
+        if self._platform_state.pending_events:
+            tasks.append("await_pending_events")
         if not self._workflow.fraud_checked:
             tasks.append("screen_fraud_indicators")
         if self._visible_subrogation_signal() and not self._workflow.subrogation_opened:
@@ -279,6 +401,12 @@ class ClaimsOpsEnv:
         overdue = [activity.activity_id for activity in self._platform_state.activities if _status_value(activity.status) in {"open", "overdue"} and activity.due_in_steps <= 0]
         if overdue:
             alerts.append("activity_overdue")
+        if self._platform_state.pending_events:
+            alerts.append("pending_external_event")
+        if self._platform_state.rental_days >= 2:
+            alerts.append("rental_leakage_risk")
+        if self._platform_state.storage_charges >= 120:
+            alerts.append("storage_fee_leakage_risk")
         return alerts
 
     def _audit_gaps(self) -> list[str]:
@@ -294,6 +422,8 @@ class ClaimsOpsEnv:
             gaps.append("claimant_not_updated")
         if not any(note.note_type.value == "closure" for note in self._platform_state.notes):
             gaps.append("closure_note_missing")
+        if self._platform_state.pending_events:
+            gaps.append("pending_external_events")
         open_activities = [activity.activity_id for activity in self._platform_state.activities if _status_value(activity.status) in {"open", "overdue"}]
         if open_activities:
             gaps.append("open_activities")
@@ -353,6 +483,7 @@ class ClaimsOpsEnv:
             action_log=self._action_log,
             evidence_ids={evidence.evidence_id for evidence in self._evidence},
             requested_documents=list(self._workflow.documents_requested),
+            received_documents=list(self._workflow.documents_received),
             remaining_steps=self._remaining_steps,
             step_budget=self._spec.claim.step_budget,
             violations=list(dict.fromkeys(self._violations)),
@@ -377,3 +508,11 @@ def _doc_value(doc: DocumentType | str) -> str:
 
 def _status_value(status: Any) -> str:
     return status.value if hasattr(status, "value") else str(status)
+
+
+def _complete_activity_by_category(platform_state: PlatformState, category: str, reason: str) -> None:
+    for activity in platform_state.activities:
+        if activity.category == category and _status_value(activity.status) in {"open", "overdue"}:
+            activity.status = ActivityStatus.COMPLETED
+            activity.close_reason = reason
+            return

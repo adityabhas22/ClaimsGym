@@ -116,6 +116,18 @@ class ScriptedBaselinePolicy(ActionPolicy):
                     "related_object_id": observation.claim_id,
                 },
             }
+        if "await_pending_events" in observation.open_tasks:
+            pending = ", ".join(event.event_type for event in observation.pending_events) or "external events"
+            return {
+                "tool": "add_claim_note",
+                "args": {
+                    "claim_id": observation.claim_id,
+                    "note_type": "estimate",
+                    "subject": "Pending external event",
+                    "body": f"Awaiting {pending} before final disposition.",
+                    "related_object_id": observation.claim_id,
+                },
+            }
         return self._final_decision(observation, context)
 
     def _final_decision(self, observation: Observation, context: AgentContext) -> dict[str, Any]:
