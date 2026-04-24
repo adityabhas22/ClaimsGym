@@ -209,6 +209,19 @@ claimsops-trace --input outputs/model-rollout.json --format markdown
 The trace lists visible state diffs, document/event/line-item changes,
 reward-component deltas, violations, and the final reward breakdown.
 
+## Workflow Rubrics
+
+Each scenario template produces a verifier-side `WorkflowRubric`. Rubrics are
+not part of observations, prompts, or tool results. They encode operational
+expectations such as policy verification, estimate review, material document
+receipt/review, authority approval, SIU/subrogation handling, forbidden
+shortcuts, and final decision/audit requirements.
+
+Rubric category scores are blended into existing reward components instead of
+creating a separate hidden-answer reward. Step `info` includes the rubric
+evaluation so trace/debug tooling can explain misses without exposing rubrics to
+the acting model.
+
 ## Sources To Revisit
 
 - OpenEnv framework: https://github.com/meta-pytorch/OpenEnv

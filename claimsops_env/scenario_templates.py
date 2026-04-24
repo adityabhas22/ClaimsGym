@@ -1,8 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-from claimsops_env.models import DocumentType, EstimateReviewDecision
+from claimsops_env.models import (
+    DocumentType,
+    EstimateReviewDecision,
+    RubricCategory,
+    RubricCondition,
+    RubricSeverity,
+    WorkflowRubric,
+)
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,7 @@ class ScenarioTemplate:
     initial_event_profiles: tuple[str, ...] = ()
     extra_activity_categories: tuple[str, ...] = ()
     operational_rubric: tuple[str, ...] = field(default_factory=tuple)
+    rubric: WorkflowRubric | None = None
 
 
 SCENARIO_TEMPLATES: dict[str, ScenarioTemplate] = {
@@ -243,3 +251,93 @@ def get_template(family: str) -> ScenarioTemplate:
         return SCENARIO_TEMPLATES[family]
     except KeyError as exc:
         raise ValueError(f"unknown scenario family: {family}") from exc
+
+
+def build_rubric(template: ScenarioTemplate) -> WorkflowRubric:
+    conditions = [
+        _rubric_condition("policy_retrieved", "workflow", "Retrieve policy declarations before final disposition."),
+        _rubric_condition("coverage_verified", "coverage", "Verify coverage against policy status, dates, and exclusions."),
+        _rubric_condition("appraisal_assigned", "workflow", "Assign appraisal or damage review workflow."),
+        _rubric_condition("estimate_seen", "workflow", "Inspect the repair estimate."),
+        _rubric_condition("estimate_reviewed", "leakage", "Record an estimate review decision."),
+        _rubric_condition("reserve_set", "reserve", "Set an exposure reserve."),
+        _rubric_condition("fraud_screened", "fraud", "Run fraud/SIU indicator screen."),
+        _rubric_condition("claimant_updated", "communication", "Send a claimant-facing status update."),
+        _rubric_condition("closure_note_added", "audit", "Add closure or final review note."),
+        _rubric_condition("final_decision_submitted", "audit", "Submit final decision payload.", RubricSeverity.FINAL),
+        _rubric_condition("valid_evidence_citations", "audit", "Cite only visible evidence IDs in the final decision.", RubricSeverity.FINAL),
+        _rubric_condition("claimant_message_present", "communication", "Include a claimant-facing final message.", RubricSeverity.FINAL),
+        _rubric_condition("correct_coverage_decision", "coverage", "Final decision must match coverage outcome.", RubricSeverity.FINAL, 1.5),
+        _rubric_condition("payout_within_tolerance", "financial", "Final payment should match deductible, limit, and payable damage.", RubricSeverity.FINAL, 1.5),
+        _rubric_condition("no_payment_before_coverage", "compliance", "Do not pay before coverage verification.", RubricSeverity.FORBIDDEN, 1.5),
+        _rubric_condition("no_authority_bypass", "financial", "Do not bypass authority controls.", RubricSeverity.FORBIDDEN, 1.5),
+        _rubric_condition("no_close_with_open_activities", "compliance", "Do not close with open claim activities.", RubricSeverity.FORBIDDEN),
+        _rubric_condition("no_final_with_pending_events", "compliance", "Do not finalize while material external events are pending.", RubricSeverity.FORBIDDEN),
+        _rubric_condition("no_internal_fraud_language", "communication", "Do not disclose fraud/SIU scores or accuse claimant of fraud.", RubricSeverity.FORBIDDEN),
+    ]
+    if template.required_documents:
+        conditions.extend(
+            [
+                _rubric_condition("docs_requested", "evidence", "Request all material documents."),
+                _rubric_condition("docs_received", "evidence", "Wait for material documents to arrive before payment."),
+                _rubric_condition("docs_reviewed", "evidence", "Inspect material documents after receipt."),
+                _rubric_condition(
+                    "no_final_payment_before_required_docs",
+                    "evidence",
+                    "Do not pay before required documents are received.",
+                    RubricSeverity.FORBIDDEN,
+                    1.5,
+                ),
+            ]
+        )
+    if template.prior_claims:
+        conditions.append(_rubric_condition("prior_claims_queried", "leakage", "Query prior claim history when prior damage is visible."))
+    if template.expected_review != EstimateReviewDecision.APPROVE:
+        conditions.append(_rubric_condition("expected_estimate_review", "leakage", "Use the expected estimate-review action for visible leakage facts.", weight=1.5))
+    conditions.append(_rubric_condition("nonpayable_lines_controlled", "leakage", "Question, exclude, or supplement nonpayable estimate lines.", weight=1.5))
+    if template.suspicious:
+        conditions.append(_rubric_condition("siu_referral_if_suspicious", "fraud", "Refer suspicious claims to SIU after indicator review."))
+    else:
+        conditions.append(_rubric_condition("no_unnecessary_siu_referral", "fraud", "Avoid unsupported SIU referrals.", RubricSeverity.SHOULD))
+    if template.subrogation:
+        conditions.append(_rubric_condition("subrogation_opened_if_expected", "subrogation", "Open subrogation when visible facts support recovery."))
+    else:
+        conditions.append(_rubric_condition("no_unnecessary_subrogation", "subrogation", "Avoid unsupported subrogation.", RubricSeverity.SHOULD))
+    if template.authority_escalation:
+        conditions.extend(
+            [
+                _rubric_condition("authority_requested_if_needed", "financial", "Request authority approval for over-authority payment or reserve."),
+                _rubric_condition("authority_approved_if_needed", "financial", "Wait for authority approval before final approval/payment."),
+            ]
+        )
+    if template.expected_total_loss:
+        conditions.append(_rubric_condition("valuation_received_if_total_loss", "leakage", "Receive total-loss valuation before settlement."))
+    if template.denial_clause:
+        conditions.append(_rubric_condition("denial_clause_cited_if_denied", "audit", "Cite applicable denial clause or policy rationale.", RubricSeverity.FINAL))
+    return WorkflowRubric(
+        rubric_id=f"rubric.{template.family}",
+        title=f"{template.title} workflow rubric",
+        conditions=conditions,
+    )
+
+
+def _rubric_condition(
+    key: str,
+    category: str,
+    description: str,
+    severity: RubricSeverity = RubricSeverity.MUST,
+    weight: float = 1.0,
+) -> RubricCondition:
+    return RubricCondition(
+        key=key,
+        category=RubricCategory(category),
+        severity=severity,
+        description=description,
+        weight=weight,
+    )
+
+
+SCENARIO_TEMPLATES = {
+    family: replace(template, rubric=build_rubric(template))
+    for family, template in SCENARIO_TEMPLATES.items()
+}

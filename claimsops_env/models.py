@@ -121,6 +121,62 @@ class NoteType(str, Enum):
     CLOSURE = "closure"
 
 
+class RubricCategory(str, Enum):
+    WORKFLOW = "workflow"
+    COVERAGE = "coverage"
+    EVIDENCE = "evidence"
+    LEAKAGE = "leakage"
+    FRAUD = "fraud"
+    SUBROGATION = "subrogation"
+    COMMUNICATION = "communication"
+    RESERVE = "reserve"
+    COMPLIANCE = "compliance"
+    FINANCIAL = "financial"
+    AUDIT = "audit"
+
+
+class RubricSeverity(str, Enum):
+    MUST = "must"
+    SHOULD = "should"
+    FORBIDDEN = "forbidden"
+    FINAL = "final"
+
+
+class RubricCondition(BaseModel):
+    key: str
+    category: RubricCategory
+    severity: RubricSeverity = RubricSeverity.MUST
+    description: str
+    weight: float = Field(default=1.0, gt=0)
+
+
+class WorkflowRubric(BaseModel):
+    rubric_id: str
+    title: str
+    conditions: list[RubricCondition] = Field(default_factory=list)
+
+
+class RubricCheck(BaseModel):
+    key: str
+    category: RubricCategory
+    severity: RubricSeverity
+    description: str
+    weight: float
+    passed: bool
+    detail: str = ""
+
+
+class RubricEvaluation(BaseModel):
+    rubric_id: str
+    title: str
+    checks: list[RubricCheck]
+    score_by_category: dict[str, float] = Field(default_factory=dict)
+    overall_score: float = 0.0
+    missed_must: list[str] = Field(default_factory=list)
+    missed_final: list[str] = Field(default_factory=list)
+    violated_forbidden: list[str] = Field(default_factory=list)
+
+
 class Policy(BaseModel):
     policy_id: str
     customer_id: str

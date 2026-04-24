@@ -18,6 +18,7 @@ ClaimsOps Gym is a synthetic, stateful claims operations simulator. One episode 
 - `claimsops_env.generator`: seeded scenario generator for claim families, visible claim-platform state, and hidden verifier labels.
 - `claimsops_env.tools`: tool registry and state-mutating tool handlers.
 - `claimsops_env.verifier`: composable reward component classes and safety caps.
+- `claimsops_env.rubric`: verifier-side workflow rubric evaluator and condition registry.
 - `claimsops_env.environment`: local `reset`, `step`, `state`, and metadata API.
 - `claimsops_env.agent_interface`: shared action catalog, observation rendering, action parsing, rollout runner, and trajectory schema.
 - `claimsops_env.tracing`: rollout trace builder for state diffs, reward deltas, and markdown/JSON debugging output.
@@ -34,6 +35,8 @@ Add a new claim scenario by adding a `ScenarioTemplate`, then wire only the fami
 Add a new tool by creating a `ToolHandler`, adding its args model, registering it in `build_tool_registry`, and adding at least one transition test. Tools are the only place where environment state should mutate.
 
 Add a reward component by implementing `RewardComponent`, adding it to `DEFAULT_COMPONENTS`, adding a weight, and asserting its independent score in tests. Avoid reward logic that depends on model identity or trajectory text outside the validated action log.
+
+Add a rubric condition by adding the condition key to a `WorkflowRubric` and registering a predicate in `claimsops_env.rubric.CONDITION_REGISTRY`. Rubrics stay verifier-side; do not add them to observations or tool results.
 
 All training and inference scripts should call `RolloutRunner` or the shared render/parse helpers instead of reimplementing the loop. This prevents drift when SFT data, GRPO reward code, local eval, and demo inference each invent a slightly different action contract.
 
@@ -115,12 +118,23 @@ thresholds, and total-loss valuation.
 - visible state diffs between observations
 - document/event/estimate-line changes
 - reward deltas for every numeric reward column present in the rollout
+- verifier-side rubric misses from step `info`
 - violations and final reward breakdown
 
 Reward columns are discovered dynamically from the `reward_breakdown` dict.
 State diffs are lens-based over observation fields and keyed collections, so
 new reward columns and most new visible state fields can be added without
 rewriting the tracer.
+
+## Workflow Rubrics
+
+Scenario templates generate a hidden `WorkflowRubric` that describes good claim
+handling in operational terms: required workflow milestones, material document
+handling, expected estimate review, authority controls, SIU/subrogation
+expectations, forbidden shortcuts, and final decision requirements. The agent
+does not see the rubric in observations. The environment evaluates it in step
+`info`, blends category scores into existing reward components, and records
+misses for trace debugging.
 
 ## Training Direction
 

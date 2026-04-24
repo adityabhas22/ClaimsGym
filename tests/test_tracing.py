@@ -16,6 +16,7 @@ def test_trace_rollout_records_reward_deltas_generically() -> None:
     assert trace.claim_id.startswith("CLM-")
     assert "workflow_progress" in reward_components
     assert "total" in reward_components
+    assert trace.steps[0].rubric_evaluation["rubric_id"] == "rubric.covered_collision"
 
 
 def test_trace_rollout_captures_document_and_event_changes() -> None:

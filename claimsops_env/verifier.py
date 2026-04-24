@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from claimsops_env.models import (
@@ -13,9 +13,12 @@ from claimsops_env.models import (
     HiddenTruth,
     PlatformState,
     RepairEstimate,
+    RubricEvaluation,
     RewardBreakdown,
     WorkflowState,
+    WorkflowRubric,
 )
+from claimsops_env.rubric import category_score, evaluate_rubric
 from claimsops_env.tools import reserve_band_for
 
 
@@ -28,6 +31,8 @@ class RewardContext:
     reserve_amount: float | None
     platform_state: PlatformState
     repair_estimate: RepairEstimate
+    rubric: WorkflowRubric
+    rubric_evaluation: RubricEvaluation | None
     action_log: list[ActionRecord]
     evidence_ids: set[str]
     requested_documents: list[DocumentType | str]
@@ -72,7 +77,8 @@ class WorkflowProgressReward:
         if context.hidden.authority_escalation_required:
             milestones.append(context.workflow.authority_requested)
             milestones.append(context.workflow.authority_approved)
-        return sum(1 for item in milestones if item) / len(milestones)
+        legacy_score = sum(1 for item in milestones if item) / len(milestones)
+        return 0.75 * legacy_score + 0.25 * _rubric_category(context, "workflow")
 
 
 class CoverageReward:
@@ -142,7 +148,8 @@ class EvidenceReward:
             and context.final_decision.payment_amount > 0
             and not required.issubset(received)
         )
-        return max(0.0, completeness - 0.05 * unnecessary - (0.25 if premature_payment else 0.0))
+        legacy_score = max(0.0, completeness - 0.05 * unnecessary - (0.25 if premature_payment else 0.0))
+        return 0.8 * legacy_score + 0.2 * _rubric_category(context, "evidence")
 
 
 class LeakageControlReward:
@@ -180,7 +187,8 @@ class LeakageControlReward:
             score -= 0.1
         if context.hidden.expected_payable == 0 and paid > 0:
             score -= 0.75
-        return max(-1.0, score)
+        legacy_score = max(-1.0, score)
+        return max(-1.0, 0.85 * legacy_score + 0.15 * _rubric_category(context, "leakage"))
 
 
 class FraudTriageReward:
@@ -276,7 +284,8 @@ class ComplianceReward:
             score -= 0.35
         if "closed_with_open_activities" in context.violations:
             score -= 0.4
-        return max(0.0, score)
+        legacy_score = max(0.0, score)
+        return 0.85 * legacy_score + 0.15 * _rubric_category(context, "compliance")
 
 
 class FinancialControlsReward:
@@ -301,7 +310,8 @@ class FinancialControlsReward:
         pending = [reserve for reserve in context.platform_state.reserve_lines if reserve.approval_status == "pending_authority"]
         if pending and not context.workflow.authority_requested:
             score -= 0.25
-        return max(0.0, score)
+        legacy_score = max(0.0, score)
+        return 0.85 * legacy_score + 0.15 * _rubric_category(context, "financial")
 
 
 class EfficiencyReward:
@@ -329,7 +339,8 @@ class AuditTrailReward:
         rationale_score = 1.0 if len(decision.rationale.strip()) >= 20 else 0.25
         note_score = 1.0 if context.platform_state.notes else 0.4
         closure_score = 1.0 if context.workflow.closure_note_added or decision.closure_disposition else 0.5
-        return 0.55 * citation_score + 0.25 * rationale_score + 0.10 * note_score + 0.10 * closure_score
+        legacy_score = 0.55 * citation_score + 0.25 * rationale_score + 0.10 * note_score + 0.10 * closure_score
+        return 0.85 * legacy_score + 0.15 * _rubric_category(context, "audit")
 
 
 DEFAULT_COMPONENTS: tuple[RewardComponent, ...] = (
@@ -367,6 +378,7 @@ WEIGHTS = {
 
 
 def score_episode(context: RewardContext) -> RewardBreakdown:
+    context = _with_rubric_evaluation(context)
     scores = {component.name: component.score(context) for component in DEFAULT_COMPONENTS}
     breakdown = RewardBreakdown(
         format_validity=1.0 if context.valid_format else -1.0,
@@ -391,6 +403,21 @@ def score_episode(context: RewardContext) -> RewardBreakdown:
     breakdown.safety_cap = cap
     breakdown.total = min(cap, max(-1.0, weighted - penalty))
     return breakdown
+
+
+def evaluate_context_rubric(context: RewardContext) -> RubricEvaluation:
+    return evaluate_rubric(context.rubric, context)
+
+
+def _with_rubric_evaluation(context: RewardContext) -> RewardContext:
+    if context.rubric_evaluation is not None:
+        return context
+    return replace(context, rubric_evaluation=evaluate_context_rubric(context))
+
+
+def _rubric_category(context: RewardContext, category: str) -> float:
+    evaluation = context.rubric_evaluation or evaluate_context_rubric(context)
+    return category_score(evaluation, category, default=1.0)
 
 
 def _penalties(context: RewardContext) -> float:

@@ -83,9 +83,9 @@ claimsops-trace --input outputs/model-rollout.json --format json
 ```
 
 The trace shows each action, tool result, visible state diffs, reward-component
-deltas, violations, and final reward breakdown. It reads the shared rollout
-schema, so saved baseline/model trajectories can be inspected without a separate
-harness.
+deltas, verifier-side rubric misses, violations, and final reward breakdown. It
+reads the shared rollout schema, so saved baseline/model trajectories can be
+inspected without a separate harness.
 
 See `CODEX.md` for the full project brief and extension plan.
 

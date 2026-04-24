@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 from pydantic import ValidationError
@@ -20,12 +21,13 @@ from claimsops_env.models import (
     Observation,
     PlatformState,
     RewardBreakdown,
+    RubricEvaluation,
     StepResult,
     ToolName,
     WorkflowState,
 )
 from claimsops_env.tools import RuntimeView, ToolError, build_tool_registry, validate_action
-from claimsops_env.verifier import RewardContext, score_episode
+from claimsops_env.verifier import RewardContext, evaluate_context_rubric, score_episode
 
 
 class ClaimsOpsEnv:
@@ -49,6 +51,7 @@ class ClaimsOpsEnv:
         self._violations: list[str] = []
         self._invalid_action_streak = 0
         self._last_reward = RewardBreakdown()
+        self._last_rubric_evaluation: RubricEvaluation | None = None
 
     def reset(self, seed: int | None = None, scenario_family: str | None = None) -> Observation:
         self._spec = (
@@ -70,6 +73,7 @@ class ClaimsOpsEnv:
         self._violations = []
         self._invalid_action_streak = 0
         self._last_reward = RewardBreakdown()
+        self._last_rubric_evaluation = None
         return self._observation()
 
     def step(self, raw_action: dict[str, Any] | str) -> StepResult:
@@ -127,7 +131,10 @@ class ClaimsOpsEnv:
                 result_summary=result_summary,
             )
         )
-        self._last_reward = self._score(valid_format=valid_format)
+        context = self._reward_context(valid_format=valid_format)
+        self._last_rubric_evaluation = evaluate_context_rubric(context)
+        context = replace(context, rubric_evaluation=self._last_rubric_evaluation)
+        self._last_reward = score_episode(context)
         if not valid_format:
             self._last_reward.total = min(self._last_reward.total, -0.2)
         done = terminal or self._workflow.final_decision_submitted
@@ -137,6 +144,7 @@ class ClaimsOpsEnv:
             done=done,
             info={
                 "reward_breakdown": self._last_reward.model_dump(),
+                "rubric_evaluation": self._last_rubric_evaluation.model_dump(mode="json") if self._last_rubric_evaluation else {},
                 "action_valid": valid_format,
                 "violations": list(dict.fromkeys(self._violations)),
             },
@@ -513,9 +521,9 @@ class ClaimsOpsEnv:
             ]
         )
 
-    def _score(self, valid_format: bool) -> RewardBreakdown:
+    def _reward_context(self, valid_format: bool) -> RewardContext:
         self._require_reset()
-        context = RewardContext(
+        return RewardContext(
             hidden=self._spec.hidden,
             workflow=self._workflow,
             final_decision=self._final_decision,
@@ -523,6 +531,8 @@ class ClaimsOpsEnv:
             reserve_amount=self._financial.reserve_amount,
             platform_state=self._platform_state,
             repair_estimate=self._spec.repair_estimate,
+            rubric=self._spec.rubric,
+            rubric_evaluation=None,
             action_log=self._action_log,
             evidence_ids={evidence.evidence_id for evidence in self._evidence},
             requested_documents=list(self._workflow.documents_requested),
@@ -532,7 +542,9 @@ class ClaimsOpsEnv:
             violations=list(dict.fromkeys(self._violations)),
             valid_format=valid_format,
         )
-        return score_episode(context)
+
+    def _score(self, valid_format: bool) -> RewardBreakdown:
+        return score_episode(self._reward_context(valid_format))
 
     def _require_reset(self) -> None:
         if self._spec is None:

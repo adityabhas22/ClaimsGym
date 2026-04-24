@@ -26,8 +26,9 @@ from claimsops_env.models import (
     Policy,
     RepairEstimate,
     ReserveBand,
+    WorkflowRubric,
 )
-from claimsops_env.scenario_templates import SCENARIO_FAMILIES, ScenarioTemplate, get_template
+from claimsops_env.scenario_templates import SCENARIO_FAMILIES, ScenarioTemplate, build_rubric, get_template
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class EpisodeSpec:
     platform_state: PlatformState
     hidden: HiddenTruth
     prior_claim_summaries: list[str]
+    rubric: WorkflowRubric
 
 
 class ScenarioGenerator:
@@ -249,6 +251,7 @@ class ScenarioGenerator:
             platform_state=platform_state,
             hidden=hidden,
             prior_claim_summaries=prior_claims,
+            rubric=template.rubric or build_rubric(template),
         )
 
     def _platform_state(

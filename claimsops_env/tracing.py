@@ -31,6 +31,7 @@ class TraceStep(BaseModel):
     reward: float
     reward_deltas: list[RewardDelta] = Field(default_factory=list)
     state_changes: list[StateChange] = Field(default_factory=list)
+    rubric_evaluation: dict[str, Any] = Field(default_factory=dict)
     violations: list[str] = Field(default_factory=list)
     done: bool = False
 
@@ -82,6 +83,11 @@ class EpisodeTrace(BaseModel):
                 lines.extend(["", "**Violations**"])
                 for violation in step.violations:
                     lines.append(f"- {violation}")
+            rubric_misses = _rubric_misses(step.rubric_evaluation, include_final=step.done)
+            if rubric_misses:
+                lines.extend(["", "**Rubric Misses**"])
+                for miss in rubric_misses:
+                    lines.append(f"- {miss}")
             lines.append(f"\nStep reward: `{_fmt_float(step.reward)}`")
         lines.extend(["", "## Final Reward"])
         for key, value in self.final_reward_breakdown.items():
@@ -107,6 +113,7 @@ def trace_rollout(result: RolloutResult | dict[str, Any]) -> EpisodeTrace:
         reward_deltas = _reward_deltas(previous_rewards, reward_breakdown)
         state_changes = diff_snapshots(before_snapshot, after_snapshot)
         latest = rollout_step.next_observation.get("latest_tool_result") or {}
+        rubric_evaluation = rollout_step.info.get("rubric_evaluation") or {}
         steps.append(
             TraceStep(
                 step=rollout_step.step,
@@ -115,6 +122,7 @@ def trace_rollout(result: RolloutResult | dict[str, Any]) -> EpisodeTrace:
                 reward=rollout_step.reward,
                 reward_deltas=reward_deltas,
                 state_changes=state_changes,
+                rubric_evaluation=rubric_evaluation,
                 violations=list(rollout_step.info.get("violations") or []),
                 done=rollout_step.done,
             )
@@ -347,3 +355,20 @@ def _action_tool(action: dict[str, Any] | str) -> str:
     if isinstance(action, dict):
         return str(action.get("tool", "<unknown>"))
     return "<raw-text-action>"
+
+
+def _rubric_misses(evaluation: dict[str, Any], *, include_final: bool) -> list[str]:
+    checks = evaluation.get("checks") or []
+    misses = []
+    for check in checks:
+        if check.get("passed"):
+            continue
+        severity = check.get("severity")
+        if severity == "final" and not include_final:
+            continue
+        if severity not in {"must", "final", "forbidden"}:
+            continue
+        key = check.get("key")
+        detail = check.get("detail")
+        misses.append(f"{severity}:{key} - {check.get('description')} ({detail})")
+    return misses
