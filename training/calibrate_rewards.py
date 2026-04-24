@@ -5,10 +5,12 @@ from pathlib import Path
 
 from claimsops_env.calibration import default_behaviors, run_calibration
 from claimsops_env.scenario_templates import SCENARIO_FAMILIES
+from claimsops_env.suites import get_suite, list_suites
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run reward calibration trajectories across ClaimsOps scenarios.")
+    parser.add_argument("--suite", default=None, choices=[suite.name for suite in list_suites()])
     parser.add_argument("--families", default="covered_collision,missing_police_report,duplicate_line_item,authority_threshold")
     parser.add_argument("--seeds", default="0,1")
     parser.add_argument("--behaviors", default="all")
@@ -18,8 +20,9 @@ def main() -> None:
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
-    families = list(SCENARIO_FAMILIES) if args.families == "all" else _split_csv(args.families)
-    seeds = [int(seed) for seed in _split_csv(args.seeds)]
+    episodes = get_suite(args.suite).episodes if args.suite else None
+    families = None if episodes else (list(SCENARIO_FAMILIES) if args.families == "all" else _split_csv(args.families))
+    seeds = None if episodes else [int(seed) for seed in _split_csv(args.seeds)]
     behaviors = default_behaviors()
     if args.behaviors != "all":
         wanted = set(_split_csv(args.behaviors))
@@ -31,6 +34,7 @@ def main() -> None:
     report = run_calibration(
         families=families,
         seeds=seeds,
+        episodes=episodes,
         behaviors=behaviors,
         include_rollouts=args.include_rollouts,
         ordering_margin=args.ordering_margin,

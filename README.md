@@ -12,8 +12,9 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 pytest -q
 claimsops-baseline --seeds 5
+claimsops-run-suite --suite smoke
 claimsops-trace --scenario-family duplicate_line_item --seed 4
-claimsops-calibrate --families covered_collision,duplicate_line_item --seeds 0
+claimsops-calibrate --suite calibration
 claimsops-server
 ```
 
@@ -37,9 +38,12 @@ claimsops_env/
   verifier.py
   environment.py
   policies.py
+  suites.py
+  suite_runner.py
   calibration.py
   server.py
 training/
+  run_suite.py
   generate_sft_data.py
   eval_baseline.py
   calibrate_rewards.py
@@ -82,6 +86,7 @@ Use `claimsops-trace` to inspect one rollout as a black-box recorder:
 
 ```bash
 claimsops-trace --scenario-family duplicate_line_item --seed 4
+claimsops-trace --suite hard_eval --episode-index 3
 claimsops-trace --input outputs/model-rollout.json --format json
 ```
 
@@ -97,7 +102,7 @@ behaviors through the shared rollout harness and reports reward columns,
 rubric misses, safety caps, and a good/mixed/bad verdict:
 
 ```bash
-claimsops-calibrate --families covered_collision,duplicate_line_item --seeds 0
+claimsops-calibrate --suite calibration
 claimsops-calibrate --families all --seeds 0,1 --format json --include-rollouts --output outputs/calibration.json
 ```
 
@@ -107,6 +112,23 @@ over-referral, and missing-evidence workflows should be visibly degraded.
 Expectations are scenario-aware, so a probe can be neutral when the shortcut it
 tests is not relevant to that claim family.
 
+## Scenario Suites
+
+Named suites keep training, eval, tracing, and calibration on the same episode
+contract:
+
+```bash
+claimsops-run-suite --suite smoke
+claimsops-run-suite --suite heldout --format json --include-rollouts --output outputs/heldout-baseline.json
+claimsops-baseline --suite curriculum_phase_1
+claimsops-generate-sft --suite curriculum_phase_1 --output outputs/phase1-sft.jsonl
+```
+
+Suites live in `claimsops_env.suites` and include `smoke`, `calibration`,
+`curriculum_phase_1` through `curriculum_phase_4`, `hard_eval`, `heldout`, and
+`demo`. The `heldout` suite uses separate seeds and should stay reserved for
+final model evaluation.
+
 See `CODEX.md` for the full project brief and extension plan.
 
-All rollout paths share `claimsops_env.agent_interface.RolloutRunner`; keep SFT generation, GRPO rewards, baseline evaluation, and model inference on that one interface.
+All rollout paths share `claimsops_env.agent_interface.RolloutRunner`; keep SFT generation, GRPO rewards, baseline evaluation, suite runs, and model inference on that one interface.

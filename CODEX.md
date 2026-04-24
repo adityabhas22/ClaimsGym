@@ -176,6 +176,13 @@ Trace debugging follows the same rule. `claimsops_env.tracing.trace_rollout`
 consumes `RolloutResult` rather than replaying its own environment loop, and
 `claimsops-trace` is only a CLI wrapper around that shared trace builder.
 
+Scenario suites are also shared. `claimsops_env.suites` owns deterministic
+episode sets for smoke checks, calibration, curriculum phases, hard evaluation,
+heldout evaluation, and demo examples. `claimsops-run-suite`,
+`claimsops-baseline`, `claimsops-calibrate`, `claimsops-trace`, and
+`claimsops-generate-sft` should consume those suites instead of hardcoding
+different family/seed loops.
+
 Reward calibration follows the same rule. `claimsops_env.calibration` runs
 known good and bad workflow policies through `RolloutRunner`, then reports raw
 reward columns, rubric misses, safety caps, and a good/mixed/bad verdict. Use it
@@ -185,7 +192,8 @@ SIU over-referral. Expectations are scenario-aware, so probes that are not
 material to a claim family are marked neutral rather than treated as failures.
 
 ```bash
-claimsops-calibrate --families covered_collision,duplicate_line_item --seeds 0
+claimsops-run-suite --suite smoke
+claimsops-calibrate --suite calibration
 claimsops-calibrate --families all --seeds 0,1 --format json --include-rollouts --output outputs/calibration.json
 ```
 

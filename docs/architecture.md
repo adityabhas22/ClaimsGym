@@ -21,10 +21,13 @@ ClaimsOps Gym is a synthetic, stateful claims operations simulator. One episode 
 - `claimsops_env.rubric`: verifier-side workflow rubric evaluator and condition registry.
 - `claimsops_env.environment`: local `reset`, `step`, `state`, and metadata API.
 - `claimsops_env.agent_interface`: shared action catalog, observation rendering, action parsing, rollout runner, and trajectory schema.
+- `claimsops_env.suites`: named scenario suites for smoke checks, curriculum phases, calibration, hard evaluation, demo, and heldout splits.
+- `claimsops_env.suite_runner`: aggregate suite runner and report schema over the shared rollout harness.
 - `claimsops_env.tracing`: rollout trace builder for state diffs, reward deltas, and markdown/JSON debugging output.
 - `claimsops_env.policies`: baseline policies that run through the same interface as model inference.
 - `claimsops_env.calibration`: reward calibration suite for known good and bad workflow behaviors.
 - `claimsops_env.server`: thin FastAPI wrapper for OpenEnv/Space deployment.
+- `training.run_suite`: CLI wrapper for named suite runs and optional saved rollout payloads.
 - `training.eval_baseline`: transparent baseline runner for smoke tests and reward-column reporting.
 - `training.calibrate_rewards`: CLI wrapper for calibration reports and optional rollout payloads.
 - `training.generate_sft_data`: warm-start trajectory generation through the shared rollout runner.
@@ -52,6 +55,12 @@ contract. Calibration policies are not trainer logic or hidden answer keys; they
 are controlled probes for the verifier. They answer whether the reward system
 ranks careful workflows above obvious shortcuts and what specific components,
 rubric misses, safety caps, or violations explain a score.
+
+Named suites are the episode-selection contract. Training, SFT generation,
+baseline evaluation, calibration, trace selection, and future model inference
+should refer to `claimsops_env.suites` instead of hardcoding separate family and
+seed lists. This keeps curriculum, heldout evaluation, and debugging runs from
+quietly drifting apart.
 
 ## Claim Platform State
 
@@ -117,6 +126,25 @@ policy lapse, limit caps, missing evidence, ownership gaps, prior damage,
 duplicate estimate lines, rental/storage leakage, suspicious inception,
 statement conflicts, excluded-driver denials, subrogation, authority
 thresholds, and total-loss valuation.
+
+## Scenario Suites
+
+`claimsops_env.suites` defines deterministic episode sets:
+
+- `smoke`: fast health check across coverage, evidence, leakage, and authority.
+- `calibration`: reward sanity gate for careful and shortcut workflow probes.
+- `curriculum_phase_1`: basic coverage, deductible, lapse, and limits.
+- `curriculum_phase_2`: missing documents and evidence handling.
+- `curriculum_phase_3`: leakage control and estimate review.
+- `curriculum_phase_4`: SIU, subrogation, authority, exclusions, conflicts, and total loss.
+- `hard_eval`: edge-case evaluation mix.
+- `heldout`: reserved split using separate seeds for final model evaluation.
+- `demo`: three example episodes for storytelling.
+
+`claimsops-run-suite` reports aggregate reward columns, per-family means, and
+episode-level verdicts. `claimsops-baseline`, `claimsops-calibrate`,
+`claimsops-trace`, and `claimsops-generate-sft` can all consume suite names so
+they stay on the same scenario contract.
 
 ## Trace Debugging
 

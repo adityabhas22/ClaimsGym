@@ -1,4 +1,5 @@
 from claimsops_env.calibration import default_behaviors, run_calibration
+from claimsops_env.suites import get_suite
 
 
 def _behaviors(*names: str):
@@ -79,3 +80,14 @@ def test_calibration_can_attach_rollout_payload_for_debugging() -> None:
     assert row.rollout is not None
     assert row.rollout["trajectory"]
     assert row.rollout["reward_breakdown"] == row.reward_breakdown
+
+
+def test_calibration_accepts_suite_episodes() -> None:
+    suite = get_suite("calibration")
+    report = run_calibration(
+        episodes=suite.episodes[:1],
+        behaviors=_behaviors("careful_adjuster", "premature_final"),
+    )
+
+    assert report.passed is True
+    assert {row.scenario_family for row in report.rows} == {suite.episodes[0].scenario_family}

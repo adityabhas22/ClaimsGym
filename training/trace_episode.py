@@ -7,12 +7,15 @@ from typing import Any
 
 from claimsops_env.agent_interface import RolloutRunner, RolloutResult
 from claimsops_env.policies import ScriptedBaselinePolicy
+from claimsops_env.suites import get_suite, list_suites
 from claimsops_env.tracing import trace_rollout
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Trace a ClaimsOps rollout with state diffs and reward deltas.")
     parser.add_argument("--input", default=None, help="Optional JSON file containing a RolloutResult or a list with one RolloutResult.")
+    parser.add_argument("--suite", default=None, choices=[suite.name for suite in list_suites()])
+    parser.add_argument("--episode-index", type=int, default=0)
     parser.add_argument("--scenario-family", default="duplicate_line_item")
     parser.add_argument("--seed", type=int, default=4)
     parser.add_argument("--max-steps", type=int, default=None)
@@ -35,6 +38,17 @@ def main() -> None:
 
 def _run_rollout(args: argparse.Namespace) -> RolloutResult:
     policy = ScriptedBaselinePolicy()
+    if args.suite:
+        suite = get_suite(args.suite)
+        if args.episode_index < 0 or args.episode_index >= len(suite.episodes):
+            raise ValueError(f"episode index {args.episode_index} outside suite size {len(suite.episodes)}")
+        episode = suite.episodes[args.episode_index]
+        return RolloutRunner().run(
+            policy,
+            seed=episode.seed,
+            scenario_family=episode.scenario_family,
+            max_steps=args.max_steps or episode.max_steps,
+        )
     return RolloutRunner().run(
         policy,
         seed=args.seed,

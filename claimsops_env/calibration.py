@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from claimsops_env.agent_interface import AgentContext, ActionPolicy, RolloutResult, RolloutRunner
 from claimsops_env.models import Observation
 from claimsops_env.scenario_templates import SCENARIO_FAMILIES, SCENARIO_TEMPLATES
+from claimsops_env.suites import SuiteEpisode, make_episodes
 
 
 class CalibrationRow(BaseModel):
@@ -176,19 +177,28 @@ def run_calibration(
     *,
     families: list[str] | None = None,
     seeds: list[int] | None = None,
+    episodes: list[SuiteEpisode] | tuple[SuiteEpisode, ...] | None = None,
     behaviors: list[BehaviorSpec] | None = None,
     include_rollouts: bool = False,
     ordering_margin: float = 0.02,
 ) -> CalibrationReport:
-    selected_families = families or list(SCENARIO_FAMILIES)
-    selected_seeds = seeds or [0]
+    selected_episodes = tuple(episodes) if episodes is not None else make_episodes(
+        families=tuple(families or list(SCENARIO_FAMILIES)),
+        seeds=tuple(seeds or [0]),
+        split="calibration",
+        tags=("calibration",),
+    )
     selected_behaviors = behaviors or default_behaviors()
     rows: list[CalibrationRow] = []
-    for family in selected_families:
-        for seed in selected_seeds:
-            for behavior in selected_behaviors:
-                rollout = RolloutRunner().run(behavior.policy, seed=seed, scenario_family=family)
-                rows.append(_row_from_rollout(family, seed, behavior, rollout, include_rollouts))
+    for episode in selected_episodes:
+        for behavior in selected_behaviors:
+            rollout = RolloutRunner().run(
+                behavior.policy,
+                seed=episode.seed,
+                scenario_family=episode.scenario_family,
+                max_steps=episode.max_steps,
+            )
+            rows.append(_row_from_rollout(episode.scenario_family, episode.seed, behavior, rollout, include_rollouts))
     return CalibrationReport(
         rows=rows,
         ordering_failures=_ordering_failures(rows, selected_behaviors, ordering_margin),
