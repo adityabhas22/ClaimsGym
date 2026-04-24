@@ -12,6 +12,7 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 pytest -q
 claimsops-baseline --seeds 5
+claimsops-trace --scenario-family duplicate_line_item --seed 4
 claimsops-server
 ```
 
@@ -71,6 +72,20 @@ The claim file also tracks document lifecycle records and repair estimate line
 items. This lets rewards distinguish requested versus received versus reviewed
 evidence, and lets leakage control score duplicate/prior-damage line handling
 instead of relying only on one aggregate estimate amount.
+
+## Trace Debugger
+
+Use `claimsops-trace` to inspect one rollout as a black-box recorder:
+
+```bash
+claimsops-trace --scenario-family duplicate_line_item --seed 4
+claimsops-trace --input outputs/model-rollout.json --format json
+```
+
+The trace shows each action, tool result, visible state diffs, reward-component
+deltas, violations, and final reward breakdown. It reads the shared rollout
+schema, so saved baseline/model trajectories can be inspected without a separate
+harness.
 
 See `CODEX.md` for the full project brief and extension plan.
 

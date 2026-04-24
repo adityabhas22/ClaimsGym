@@ -172,6 +172,10 @@ OpsArena taught us not to scatter rollout loops across SFT, RL, eval, and infere
 
 SFT generation, GRPO reward functions, scripted baselines, and `inference.py` should all use this interface. If the environment API changes, update the shared interface first and keep scripts thin.
 
+Trace debugging follows the same rule. `claimsops_env.tracing.trace_rollout`
+consumes `RolloutResult` rather than replaying its own environment loop, and
+`claimsops-trace` is only a CLI wrapper around that shared trace builder.
+
 ## Model And Training Direction
 
 Use a capable instruct model with reliable JSON/tool-call behavior for the first training runs. Start in the 4B to 8B range so rollouts are cheap enough to inspect manually. Good candidate classes are Qwen instruct and Llama instruct models; the exact checkpoint should be refreshed before training starts.
@@ -194,6 +198,16 @@ Show three episodes:
 - Hard claim with leakage, SIU signal, or subrogation.
 
 For each, show baseline trajectory, reward breakdown, trained trajectory, reward breakdown, and one short explanation of what improved.
+
+Use `claimsops-trace` to generate the before/after debugging artifact:
+
+```bash
+claimsops-trace --scenario-family duplicate_line_item --seed 4
+claimsops-trace --input outputs/model-rollout.json --format markdown
+```
+
+The trace lists visible state diffs, document/event/line-item changes,
+reward-component deltas, violations, and the final reward breakdown.
 
 ## Sources To Revisit
 

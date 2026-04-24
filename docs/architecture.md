@@ -20,6 +20,7 @@ ClaimsOps Gym is a synthetic, stateful claims operations simulator. One episode 
 - `claimsops_env.verifier`: composable reward component classes and safety caps.
 - `claimsops_env.environment`: local `reset`, `step`, `state`, and metadata API.
 - `claimsops_env.agent_interface`: shared action catalog, observation rendering, action parsing, rollout runner, and trajectory schema.
+- `claimsops_env.tracing`: rollout trace builder for state diffs, reward deltas, and markdown/JSON debugging output.
 - `claimsops_env.policies`: baseline policies that run through the same interface as model inference.
 - `claimsops_env.server`: thin FastAPI wrapper for OpenEnv/Space deployment.
 - `training.eval_baseline`: transparent baseline runner for smoke tests and reward-column reporting.
@@ -35,6 +36,11 @@ Add a new tool by creating a `ToolHandler`, adding its args model, registering i
 Add a reward component by implementing `RewardComponent`, adding it to `DEFAULT_COMPONENTS`, adding a weight, and asserting its independent score in tests. Avoid reward logic that depends on model identity or trajectory text outside the validated action log.
 
 All training and inference scripts should call `RolloutRunner` or the shared render/parse helpers instead of reimplementing the loop. This prevents drift when SFT data, GRPO reward code, local eval, and demo inference each invent a slightly different action contract.
+
+`claimsops_env.tracing.trace_rollout` consumes the shared `RolloutResult`
+schema. It does not run a separate environment loop, so traces for scripted
+baselines, model inference, saved eval rollouts, and future training examples
+all use the same action/observation/reward contract.
 
 ## Claim Platform State
 
@@ -100,6 +106,21 @@ policy lapse, limit caps, missing evidence, ownership gaps, prior damage,
 duplicate estimate lines, rental/storage leakage, suspicious inception,
 statement conflicts, excluded-driver denials, subrogation, authority
 thresholds, and total-loss valuation.
+
+## Trace Debugging
+
+`claimsops-trace` renders a single rollout as a developer-readable record:
+
+- action JSON and tool summary
+- visible state diffs between observations
+- document/event/estimate-line changes
+- reward deltas for every numeric reward column present in the rollout
+- violations and final reward breakdown
+
+Reward columns are discovered dynamically from the `reward_breakdown` dict.
+State diffs are lens-based over observation fields and keyed collections, so
+new reward columns and most new visible state fields can be added without
+rewriting the tracer.
 
 ## Training Direction
 

@@ -465,7 +465,13 @@ class ReviewEstimateTool(ToolHandler):
         return ToolResult(
             ok=True,
             summary=f"Estimate review recorded: {parsed.action.value}.",
-            data={"action": parsed.action.value},
+            data={
+                "action": parsed.action.value,
+                "line_items": [
+                    line.model_dump(mode="json")
+                    for line in runtime.spec.repair_estimate.line_items
+                ],
+            },
         )
 
 

@@ -41,6 +41,7 @@ server = "server.app:main"
 claimsops-server = "claimsops_env.server:main"
 claimsops-baseline = "training.eval_baseline:main"
 claimsops-generate-sft = "training.generate_sft_data:main"
+claimsops-trace = "training.trace_episode:main"
 
 [tool.setuptools.packages.find]
 include = ["claimsops_env*", "server*", "training*"]
