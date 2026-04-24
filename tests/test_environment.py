@@ -69,3 +69,39 @@ def test_pending_events_do_not_expose_hidden_labels() -> None:
     assert "required_documents" not in text
     assert "fraud_suspicious" not in text
     assert "hidden" not in text
+
+
+def test_workflow_affordances_surface_visible_blockers_without_hidden_truth() -> None:
+    env = ClaimsOpsEnv()
+    observation = env.reset(seed=1, scenario_family="missing_police_report")
+    affordances = observation.workflow_affordances
+
+    assert affordances.claim_phase == "intake"
+    assert "coverage_not_verified" in affordances.close_blockers
+    assert "coverage" in affordances.recommended_action_categories
+    assert affordances.action_availability["get_policy"] is True
+    assert affordances.action_availability["submit_final_decision"] is False
+    assert affordances.next_due_steps is not None
+
+    text = str(affordances.model_dump()).lower()
+    assert "expected_payable" not in text
+    assert "required_documents" not in text
+    assert "fraud_suspicious" not in text
+    assert "hidden" not in text
+
+
+def test_workflow_affordances_show_waiting_state_after_external_request() -> None:
+    env = ClaimsOpsEnv()
+    observation = env.reset(seed=1, scenario_family="missing_police_report")
+    result = env.step(
+        {
+            "tool": "request_document",
+            "args": {"doc_type": "police_report", "reason": "Needed for liability review."},
+        }
+    )
+    affordances = result.observation.workflow_affordances
+
+    assert affordances.claim_phase == "waiting_on_external"
+    assert any(item.startswith("document_arrival:") for item in affordances.waiting_on)
+    assert "waiting_on_external" in affordances.close_blockers
+    assert affordances.action_availability["submit_final_decision"] is False

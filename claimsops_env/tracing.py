@@ -169,6 +169,7 @@ class SnapshotBuilder:
             "open_tasks": sorted(observation.get("open_tasks") or []),
             "alerts": sorted(observation.get("alerts") or []),
             "audit_gaps": sorted(observation.get("audit_gaps") or []),
+            "workflow_affordances": observation.get("workflow_affordances") or {},
             "financial_snapshot": observation.get("financial_snapshot") or {},
             "claim_documents": _by_key(observation.get("claim_documents") or [], "document_id"),
             "pending_events": _by_key(observation.get("pending_events") or [], "event_id"),
@@ -187,6 +188,7 @@ def diff_snapshots(before: dict[str, Any], after: dict[str, Any]) -> list[StateC
     changes: list[StateChange] = []
     for path in ["open_tasks", "alerts", "audit_gaps"]:
         changes.extend(_list_changes(path, before.get(path, []), after.get(path, [])))
+    changes.extend(_dict_field_changes("workflow_affordances", before.get("workflow_affordances", {}), after.get("workflow_affordances", {})))
     changes.extend(_dict_field_changes("financial_snapshot", before.get("financial_snapshot", {}), after.get("financial_snapshot", {})))
     for path in [
         "claim_documents",
@@ -210,6 +212,9 @@ def _initial_summary(observation: dict[str, Any]) -> dict[str, Any]:
         "loss_date": observation.get("loss_date"),
         "reported_date": observation.get("reported_date"),
         "requested_amount": observation.get("requested_amount"),
+        "claim_phase": (observation.get("workflow_affordances") or {}).get("claim_phase"),
+        "waiting_on": (observation.get("workflow_affordances") or {}).get("waiting_on") or [],
+        "close_blockers": (observation.get("workflow_affordances") or {}).get("close_blockers") or [],
         "open_tasks": observation.get("open_tasks") or [],
         "alerts": observation.get("alerts") or [],
         "documents": [

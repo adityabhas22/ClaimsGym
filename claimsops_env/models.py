@@ -450,6 +450,15 @@ class WorkflowState(BaseModel):
     final_decision_submitted: bool = False
 
 
+class WorkflowAffordances(BaseModel):
+    claim_phase: str
+    waiting_on: list[str] = Field(default_factory=list)
+    close_blockers: list[str] = Field(default_factory=list)
+    next_due_steps: int | None = None
+    recommended_action_categories: list[str] = Field(default_factory=list)
+    action_availability: dict[str, bool] = Field(default_factory=dict)
+
+
 class Action(BaseModel):
     tool: ToolName
     args: dict[str, Any] = Field(default_factory=dict)
@@ -494,6 +503,7 @@ class Observation(BaseModel):
     coverage_result: dict[str, Any] | None = None
     alerts: list[str] = Field(default_factory=list)
     audit_gaps: list[str] = Field(default_factory=list)
+    workflow_affordances: WorkflowAffordances
     claim_diary: list[str]
     financial_snapshot: FinancialSnapshot
     communications_sent: list[str]

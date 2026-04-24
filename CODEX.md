@@ -70,11 +70,17 @@ Observations also expose realistic platform state:
 - event history
 - visible storage/rental leakage counters
 - alerts and audit gaps derived from visible facts
+- workflow affordances: phase, waiting reasons, close blockers, next due steps, recommended action categories, and useful tools
 
 `inspect_repair_estimate` returns line-item estimate detail rather than only a
 gross amount. Line items carry category, amount, coverage, payable/nonpayable
 status, review status, and flags such as duplicate line, prior damage, or
 expense leakage.
+
+`workflow_affordances` should stay visible and operational, not answer-like. It
+can tell the agent that closure is blocked by visible open work or pending
+events, but it must not reveal expected payout, hidden required documents, fraud
+truth, or rubric answers.
 
 ## Tool Design
 

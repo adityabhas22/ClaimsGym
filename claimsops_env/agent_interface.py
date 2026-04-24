@@ -172,6 +172,7 @@ Rules:
 - Verify policy and estimate before final payment decisions.
 - Request required missing documents before paying.
 - Cite only evidence IDs that are visible in the claim file.
+- Use workflow_affordances to understand phase, blockers, waiting state, due work, and useful tools.
 - Never ask for hidden truth, expected outcome, verifier state, reward, or answer keys.
 - Do not reveal internal fraud scores or accuse the claimant of fraud.
 """

@@ -80,6 +80,12 @@ items. This lets rewards distinguish requested versus received versus reviewed
 evidence, and lets leakage control score duplicate/prior-damage line handling
 instead of relying only on one aggregate estimate amount.
 
+Observations include `workflow_affordances`, a visible claim-desk guide with
+claim phase, waiting reasons, close blockers, next due step, recommended action
+categories, and currently useful tools. These signals are derived from visible
+claim-system state and are meant to help agents navigate the workflow without
+exposing hidden verifier labels.
+
 ## Trace Debugger
 
 Use `claimsops-trace` to inspect one rollout as a black-box recorder:
@@ -93,7 +99,9 @@ claimsops-trace --input outputs/model-rollout.json --format json
 The trace shows each action, tool result, visible state diffs, reward-component
 deltas, verifier-side rubric misses, violations, and final reward breakdown. It
 reads the shared rollout schema, so saved baseline/model trajectories can be
-inspected without a separate harness.
+inspected without a separate harness. Workflow affordance changes are included
+in the trace so you can see when a case moves from intake to waiting,
+investigation, pre-closure, ready-for-decision, or closed.
 
 ## Reward Calibration
 

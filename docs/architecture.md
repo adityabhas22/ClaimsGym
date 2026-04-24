@@ -80,8 +80,26 @@ The simulator now exposes a claim-system style file rather than a flat adjudicat
 - pending external events and resolved event history
 - rental days and storage charges for visible leakage pressure
 - alerts and audit gaps derived from visible facts
+- workflow affordances with phase, wait reasons, close blockers, due timing, recommended action categories, and useful tools
 
 Hidden truth remains separate: expected payout, fraud truth, true leakage, required evidence, total-loss expectation, and authority requirements are used only by verifiers.
+
+## Workflow Affordances
+
+`Observation.workflow_affordances` is a model-facing navigation layer derived
+only from visible claim-system state. It contains:
+
+- `claim_phase`: coarse phase such as intake, investigation, waiting on external work, authority review, pre-closure, ready for decision, or closed.
+- `waiting_on`: pending external events, requested documents, vendor assignments, or authority approval.
+- `close_blockers`: visible tasks, audit gaps, open activities, and external waits that make final closure premature.
+- `next_due_steps`: nearest visible activity or event deadline.
+- `recommended_action_categories`: high-level categories such as coverage, evidence, leakage, reserve, communication, audit, authority, or decision.
+- `action_availability`: tool-level booleans for currently useful actions.
+
+These fields are not rewards and do not expose expected payout, required hidden
+documents, fraud truth, or verifier rubrics. They are the equivalent of a claim
+system surfacing work queues, blockers, and due work so a model can explore the
+environment without needing brittle hidden task heuristics.
 
 ## Casework Depth
 
@@ -152,6 +170,7 @@ they stay on the same scenario contract.
 
 - action JSON and tool summary
 - visible state diffs between observations
+- workflow-affordance phase, blocker, wait, and action-availability changes
 - document/event/estimate-line changes
 - reward deltas for every numeric reward column present in the rollout
 - verifier-side rubric misses from step `info`

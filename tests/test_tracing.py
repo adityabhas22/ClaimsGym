@@ -14,9 +14,18 @@ def test_trace_rollout_records_reward_deltas_generically() -> None:
     }
 
     assert trace.claim_id.startswith("CLM-")
+    assert trace.initial_summary["claim_phase"] == "intake"
     assert "workflow_progress" in reward_components
     assert "total" in reward_components
     assert trace.steps[0].rubric_evaluation["rubric_id"] == "rubric.covered_collision"
+
+
+def test_trace_rollout_records_workflow_affordance_changes() -> None:
+    result = RolloutRunner().run(ScriptedBaselinePolicy(), seed=1, scenario_family="covered_collision")
+    trace = trace_rollout(result)
+    summaries = [change.summary for step in trace.steps for change in step.state_changes]
+
+    assert any("workflow_affordances.claim_phase" in summary for summary in summaries)
 
 
 def test_trace_rollout_captures_document_and_event_changes() -> None:

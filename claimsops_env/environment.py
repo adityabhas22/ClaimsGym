@@ -24,6 +24,7 @@ from claimsops_env.models import (
     RubricEvaluation,
     StepResult,
     ToolName,
+    WorkflowAffordances,
     WorkflowState,
 )
 from claimsops_env.tools import RuntimeView, ToolError, build_tool_registry, validate_action
@@ -351,6 +352,9 @@ class ClaimsOpsEnv:
     def _observation(self) -> Observation:
         self._require_reset()
         claim = self._spec.claim
+        open_tasks = self._open_tasks()
+        alerts = self._alerts()
+        audit_gaps = self._audit_gaps()
         return Observation(
             claim_id=claim.claim_id,
             policy_id=claim.policy_id,
@@ -381,12 +385,13 @@ class ClaimsOpsEnv:
             storage_charges=self._platform_state.storage_charges,
             appraisal_status=self._platform_state.appraisal_status,
             coverage_result=self._platform_state.coverage_result,
-            alerts=self._alerts(),
-            audit_gaps=self._audit_gaps(),
+            alerts=alerts,
+            audit_gaps=audit_gaps,
+            workflow_affordances=self._workflow_affordances(open_tasks=open_tasks, audit_gaps=audit_gaps, alerts=alerts),
             claim_diary=self._diary,
             financial_snapshot=self._financial,
             communications_sent=self._communications,
-            open_tasks=self._open_tasks(),
+            open_tasks=open_tasks,
             available_tools=list(ToolName),
             remaining_steps=self._remaining_steps,
         )
@@ -428,6 +433,104 @@ class ClaimsOpsEnv:
         if not self._workflow.final_decision_submitted:
             tasks.append("submit_final_decision")
         return tasks
+
+    def _workflow_affordances(self, *, open_tasks: list[str], audit_gaps: list[str], alerts: list[str]) -> WorkflowAffordances:
+        waiting_on = self._waiting_on()
+        close_blockers = self._close_blockers(open_tasks=open_tasks, audit_gaps=audit_gaps, waiting_on=waiting_on)
+        recommended_categories = self._recommended_action_categories(open_tasks=open_tasks, waiting_on=waiting_on)
+        return WorkflowAffordances(
+            claim_phase=self._claim_phase(open_tasks=open_tasks, waiting_on=waiting_on, close_blockers=close_blockers),
+            waiting_on=waiting_on,
+            close_blockers=close_blockers,
+            next_due_steps=self._next_due_steps(),
+            recommended_action_categories=recommended_categories,
+            action_availability=self._action_availability(open_tasks=open_tasks, close_blockers=close_blockers, alerts=alerts),
+        )
+
+    def _claim_phase(self, *, open_tasks: list[str], waiting_on: list[str], close_blockers: list[str]) -> str:
+        if self._workflow.final_decision_submitted:
+            return "closed"
+        if waiting_on:
+            return "waiting_on_external"
+        if not self._workflow.policy_seen or not self._platform_state.coverage_verified:
+            return "intake"
+        if not self._workflow.estimate_reviewed or any(task.startswith("request_") for task in open_tasks):
+            return "investigation"
+        if self._workflow.authority_requested and not self._workflow.authority_approved:
+            return "authority_review"
+        if close_blockers:
+            return "pre_closure"
+        return "ready_for_decision"
+
+    def _waiting_on(self) -> list[str]:
+        waiting: list[str] = []
+        for event in self._platform_state.pending_events:
+            waiting.append(f"{event.event_type}:{event.due_in_steps}")
+        for assignment in self._platform_state.vendor_assignments:
+            if assignment.status == "assigned":
+                waiting.append(f"{assignment.vendor_type}:{assignment.eta_steps}")
+        for document in self._platform_state.documents:
+            if document.status == "requested":
+                waiting.append(f"{document.doc_type.value}:requested")
+        pending_reserves = [
+            reserve.reserve_id for reserve in self._platform_state.reserve_lines if reserve.approval_status == "pending_authority"
+        ]
+        if pending_reserves:
+            waiting.append("authority_approval:pending")
+        return waiting
+
+    def _close_blockers(self, *, open_tasks: list[str], audit_gaps: list[str], waiting_on: list[str]) -> list[str]:
+        blockers = [task for task in open_tasks if task != "submit_final_decision"]
+        blockers.extend(gap for gap in audit_gaps if gap not in {"open_activities"})
+        if waiting_on:
+            blockers.append("waiting_on_external")
+        open_activities = [
+            activity.category
+            for activity in self._platform_state.activities
+            if _status_value(activity.status) in {"open", "overdue"}
+        ]
+        blockers.extend(f"open_activity:{category}" for category in open_activities)
+        return list(dict.fromkeys(blockers))
+
+    def _next_due_steps(self) -> int | None:
+        due_steps = [
+            activity.due_in_steps
+            for activity in self._platform_state.activities
+            if _status_value(activity.status) in {"open", "overdue"}
+        ]
+        due_steps.extend(event.due_in_steps for event in self._platform_state.pending_events)
+        return min(due_steps) if due_steps else None
+
+    def _recommended_action_categories(self, *, open_tasks: list[str], waiting_on: list[str]) -> list[str]:
+        categories: list[str] = []
+        for task in open_tasks:
+            categories.extend(_TASK_CATEGORIES.get(task, ()))
+            if task.startswith("request_") and task not in {"request_valuation", "request_authority_approval"}:
+                categories.append("evidence")
+        if waiting_on:
+            categories.append("diary")
+        return list(dict.fromkeys(categories))
+
+    def _action_availability(self, *, open_tasks: list[str], close_blockers: list[str], alerts: list[str]) -> dict[str, bool]:
+        useful_tools = {tool.value: False for tool in ToolName}
+        for task in open_tasks:
+            for tool in _TASK_TOOLS.get(task, ()):
+                useful_tools[tool] = True
+            if task.startswith("request_") and task not in {"request_valuation", "request_authority_approval"}:
+                useful_tools[ToolName.REQUEST_DOCUMENT.value] = True
+        if any(document.status == "received" and document.evidence_id for document in self._platform_state.documents):
+            useful_tools[ToolName.INSPECT_EVIDENCE.value] = True
+        if "possible_prior_damage" in alerts:
+            useful_tools[ToolName.QUERY_PRIOR_CLAIMS.value] = True
+        if any("requires_siu_review" in flag for evidence in self._evidence for flag in evidence.flags):
+            useful_tools[ToolName.OPEN_SIU_REFERRAL.value] = True
+            useful_tools[ToolName.REFER_TO_SIU.value] = True
+        if "activity_overdue" in alerts or "await_pending_events" in open_tasks:
+            useful_tools[ToolName.ADD_CLAIM_NOTE.value] = True
+        useful_tools[ToolName.SUBMIT_FINAL_DECISION.value] = (
+            "submit_final_decision" in open_tasks and not close_blockers
+        )
+        return useful_tools
 
     def _alerts(self) -> list[str]:
         self._require_reset()
@@ -571,6 +674,42 @@ def _complete_activity_by_category(platform_state: PlatformState, category: str,
             activity.status = ActivityStatus.COMPLETED
             activity.close_reason = reason
             return
+
+
+_TASK_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "verify_policy": ("coverage",),
+    "verify_coverage": ("coverage",),
+    "assign_appraisal": ("estimate",),
+    "inspect_estimate": ("estimate",),
+    "review_estimate": ("leakage", "estimate"),
+    "request_valuation": ("valuation", "leakage"),
+    "await_pending_events": ("diary",),
+    "screen_fraud_indicators": ("fraud",),
+    "evaluate_subrogation": ("subrogation",),
+    "set_reserve": ("reserve",),
+    "request_authority_approval": ("authority", "financial"),
+    "send_claimant_update": ("communication",),
+    "add_closure_note": ("audit",),
+    "submit_final_decision": ("decision",),
+}
+
+
+_TASK_TOOLS: dict[str, tuple[str, ...]] = {
+    "verify_policy": (ToolName.GET_POLICY.value, ToolName.GET_POLICY_SNAPSHOT.value),
+    "verify_coverage": (ToolName.VERIFY_COVERAGE.value, ToolName.CHECK_POLICY_STATUS.value),
+    "assign_appraisal": (ToolName.ASSIGN_APPRAISAL.value,),
+    "inspect_estimate": (ToolName.INSPECT_REPAIR_ESTIMATE.value,),
+    "review_estimate": (ToolName.REVIEW_ESTIMATE.value,),
+    "request_valuation": (ToolName.REQUEST_VALUATION.value,),
+    "await_pending_events": (ToolName.ADD_CLAIM_NOTE.value,),
+    "screen_fraud_indicators": (ToolName.CHECK_FRAUD_INDICATORS.value,),
+    "evaluate_subrogation": (ToolName.OPEN_SUBROGATION.value,),
+    "set_reserve": (ToolName.SET_RESERVE.value,),
+    "request_authority_approval": (ToolName.REQUEST_AUTHORITY_APPROVAL.value,),
+    "send_claimant_update": (ToolName.SEND_CLAIMANT_MESSAGE.value,),
+    "add_closure_note": (ToolName.ADD_CLAIM_NOTE.value,),
+    "submit_final_decision": (ToolName.SUBMIT_FINAL_DECISION.value,),
+}
 
 
 def _claim_document(
