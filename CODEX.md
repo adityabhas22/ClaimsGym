@@ -176,6 +176,19 @@ Trace debugging follows the same rule. `claimsops_env.tracing.trace_rollout`
 consumes `RolloutResult` rather than replaying its own environment loop, and
 `claimsops-trace` is only a CLI wrapper around that shared trace builder.
 
+Reward calibration follows the same rule. `claimsops_env.calibration` runs
+known good and bad workflow policies through `RolloutRunner`, then reports raw
+reward columns, rubric misses, safety caps, and a good/mixed/bad verdict. Use it
+before training runs and after reward edits to check that careful claim handling
+beats shortcuts such as premature closure, overpayment, missing evidence, and
+SIU over-referral. Expectations are scenario-aware, so probes that are not
+material to a claim family are marked neutral rather than treated as failures.
+
+```bash
+claimsops-calibrate --families covered_collision,duplicate_line_item --seeds 0
+claimsops-calibrate --families all --seeds 0,1 --format json --include-rollouts --output outputs/calibration.json
+```
+
 ## Model And Training Direction
 
 Use a capable instruct model with reliable JSON/tool-call behavior for the first training runs. Start in the 4B to 8B range so rollouts are cheap enough to inspect manually. Good candidate classes are Qwen instruct and Llama instruct models; the exact checkpoint should be refreshed before training starts.

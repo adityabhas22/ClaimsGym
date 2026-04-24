@@ -361,19 +361,19 @@ DEFAULT_COMPONENTS: tuple[RewardComponent, ...] = (
 
 
 WEIGHTS = {
-    "workflow_progress": 0.10,
+    "workflow_progress": 0.08,
     "coverage": 0.14,
     "payout": 0.14,
     "evidence": 0.10,
     "leakage_control": 0.10,
-    "fraud_triage": 0.07,
-    "subrogation": 0.07,
+    "fraud_triage": 0.12,
+    "subrogation": 0.06,
     "communication": 0.07,
     "reserve": 0.05,
     "compliance": 0.06,
     "financial_controls": 0.05,
-    "efficiency": 0.02,
-    "audit_trail": 0.03,
+    "efficiency": 0.01,
+    "audit_trail": 0.02,
 }
 
 

@@ -23,8 +23,10 @@ ClaimsOps Gym is a synthetic, stateful claims operations simulator. One episode 
 - `claimsops_env.agent_interface`: shared action catalog, observation rendering, action parsing, rollout runner, and trajectory schema.
 - `claimsops_env.tracing`: rollout trace builder for state diffs, reward deltas, and markdown/JSON debugging output.
 - `claimsops_env.policies`: baseline policies that run through the same interface as model inference.
+- `claimsops_env.calibration`: reward calibration suite for known good and bad workflow behaviors.
 - `claimsops_env.server`: thin FastAPI wrapper for OpenEnv/Space deployment.
 - `training.eval_baseline`: transparent baseline runner for smoke tests and reward-column reporting.
+- `training.calibrate_rewards`: CLI wrapper for calibration reports and optional rollout payloads.
 - `training.generate_sft_data`: warm-start trajectory generation through the shared rollout runner.
 - `training.train_grpo`: minimal TRL GRPO scaffold.
 
@@ -44,6 +46,12 @@ All training and inference scripts should call `RolloutRunner` or the shared ren
 schema. It does not run a separate environment loop, so traces for scripted
 baselines, model inference, saved eval rollouts, and future training examples
 all use the same action/observation/reward contract.
+
+`claimsops_env.calibration.run_calibration` also consumes the shared rollout
+contract. Calibration policies are not trainer logic or hidden answer keys; they
+are controlled probes for the verifier. They answer whether the reward system
+ranks careful workflows above obvious shortcuts and what specific components,
+rubric misses, safety caps, or violations explain a score.
 
 ## Claim Platform State
 
@@ -125,6 +133,29 @@ Reward columns are discovered dynamically from the `reward_breakdown` dict.
 State diffs are lens-based over observation fields and keyed collections, so
 new reward columns and most new visible state fields can be added without
 rewriting the tracer.
+
+## Reward Calibration
+
+`claimsops-calibrate` runs a suite of deliberately different behaviors through
+the environment:
+
+- `careful_adjuster`: completes visible workflow tasks, waits on events,
+  reviews returned documents, and finalizes with supported payment or denial.
+- `missing_evidence`: skips material document request/review work.
+- `siu_everything`: over-refers claims to SIU.
+- `overpay`: investigates lightly but pays above supported exposure.
+- `premature_final`: closes immediately.
+- `authority_bypass`: tries to pay without required approval.
+
+Each row reports total reward, component breakdown, rubric score, safety cap,
+penalties, terminal state, and a good/mixed/bad verdict. Expectations are
+scenario-aware: for example, the missing-evidence probe is neutral on a
+straight-through claim with no required documents, but bad on a claim where a
+police report, statement, ownership proof, or estimate breakdown is material.
+Pass/fail ordering is focused on the important calibration claim: known good
+workflows should beat known shortcut workflows. Scores among bad behaviors
+remain diagnostic because some scenarios legitimately punish one bad shortcut
+more severely than another.
 
 ## Workflow Rubrics
 

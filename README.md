@@ -13,6 +13,7 @@ pip install -e '.[dev]'
 pytest -q
 claimsops-baseline --seeds 5
 claimsops-trace --scenario-family duplicate_line_item --seed 4
+claimsops-calibrate --families covered_collision,duplicate_line_item --seeds 0
 claimsops-server
 ```
 
@@ -36,10 +37,12 @@ claimsops_env/
   verifier.py
   environment.py
   policies.py
+  calibration.py
   server.py
 training/
   generate_sft_data.py
   eval_baseline.py
+  calibrate_rewards.py
   train_grpo.py
 inference.py
 tests/
@@ -86,6 +89,23 @@ The trace shows each action, tool result, visible state diffs, reward-component
 deltas, verifier-side rubric misses, violations, and final reward breakdown. It
 reads the shared rollout schema, so saved baseline/model trajectories can be
 inspected without a separate harness.
+
+## Reward Calibration
+
+Use `claimsops-calibrate` before changing training code. It runs known workflow
+behaviors through the shared rollout harness and reports reward columns,
+rubric misses, safety caps, and a good/mixed/bad verdict:
+
+```bash
+claimsops-calibrate --families covered_collision,duplicate_line_item --seeds 0
+claimsops-calibrate --families all --seeds 0,1 --format json --include-rollouts --output outputs/calibration.json
+```
+
+The goal is to catch reward-shaping mistakes early: a careful adjuster workflow
+should outrank shortcut policies, while overpaying, premature closure, SIU
+over-referral, and missing-evidence workflows should be visibly degraded.
+Expectations are scenario-aware, so a probe can be neutral when the shortcut it
+tests is not relevant to that claim family.
 
 See `CODEX.md` for the full project brief and extension plan.
 
