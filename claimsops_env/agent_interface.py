@@ -28,6 +28,11 @@ ACTION_CATALOG: tuple[ToolSpec, ...] = (
         required_args=["policy_id"],
     ),
     ToolSpec(
+        name=ToolName.GET_POLICY_SNAPSHOT.value,
+        description="Alias for policy retrieval using platform-style naming.",
+        required_args=["policy_id"],
+    ),
+    ToolSpec(
         name=ToolName.CHECK_POLICY_STATUS.value,
         description="Check whether the policy was active on the loss date.",
         required_args=["policy_id", "loss_date"],
@@ -36,6 +41,11 @@ ACTION_CATALOG: tuple[ToolSpec, ...] = (
         name=ToolName.INSPECT_REPAIR_ESTIMATE.value,
         description="Inspect repair estimate amount, covered amount, duplicate lines, unrelated damage, and notes.",
         required_args=["estimate_id"],
+    ),
+    ToolSpec(
+        name=ToolName.INSPECT_EVIDENCE.value,
+        description="Inspect any visible evidence item by evidence_id.",
+        required_args=["evidence_id"],
     ),
     ToolSpec(
         name=ToolName.REQUEST_DOCUMENT.value,
@@ -53,9 +63,37 @@ ACTION_CATALOG: tuple[ToolSpec, ...] = (
         required_args=["claim_id"],
     ),
     ToolSpec(
+        name=ToolName.CREATE_OR_UPDATE_EXPOSURE.value,
+        description="Create or update an exposure linking claimant, coverage, and incident.",
+        required_args=["coverage", "claimant_id", "incident_id"],
+        optional_args=["exposure_id"],
+    ),
+    ToolSpec(
+        name=ToolName.VERIFY_COVERAGE.value,
+        description="Verify coverage for an exposure using policy and loss facts.",
+        required_args=["claim_id", "loss_facts"],
+        optional_args=["exposure_id"],
+    ),
+    ToolSpec(
+        name=ToolName.ASSIGN_APPRAISAL.value,
+        description="Assign photo, field, or shop appraisal for the vehicle damage.",
+        required_args=["claim_id", "method"],
+    ),
+    ToolSpec(
+        name=ToolName.REVIEW_ESTIMATE.value,
+        description="Record estimate review decision: approve, request_supplement, confirm_total_loss, escalate_field, or request_photos.",
+        required_args=["claim_id", "estimate_id", "action", "rationale"],
+    ),
+    ToolSpec(
+        name=ToolName.REQUEST_VALUATION.value,
+        description="Request total-loss valuation when damage approaches the threshold.",
+        required_args=["claim_id", "reason"],
+    ),
+    ToolSpec(
         name=ToolName.SET_RESERVE.value,
         description="Set the claim reserve amount with rationale.",
         required_args=["amount", "rationale"],
+        optional_args=["exposure_id", "cost_type", "cost_category"],
     ),
     ToolSpec(
         name=ToolName.APPROVE_PAYMENT.value,
@@ -63,14 +101,47 @@ ACTION_CATALOG: tuple[ToolSpec, ...] = (
         required_args=["amount", "coverages", "rationale"],
     ),
     ToolSpec(
+        name=ToolName.ISSUE_PAYMENT.value,
+        description="Issue a payment against an exposure, subject to coverage and authority controls.",
+        required_args=["payee_id", "amount", "rationale"],
+        optional_args=["exposure_id", "payment_type", "method"],
+    ),
+    ToolSpec(
+        name=ToolName.REQUEST_AUTHORITY_APPROVAL.value,
+        description="Request and record approval when reserve or payment exceeds adjuster authority.",
+        required_args=["amount", "rationale"],
+        optional_args=["exposure_id"],
+    ),
+    ToolSpec(
         name=ToolName.REFER_TO_SIU.value,
         description="Open an SIU referral using valid evidence IDs.",
+        required_args=["reason", "evidence_ids"],
+    ),
+    ToolSpec(
+        name=ToolName.OPEN_SIU_REFERRAL.value,
+        description="Alias for SIU referral using platform-style naming.",
         required_args=["reason", "evidence_ids"],
     ),
     ToolSpec(
         name=ToolName.OPEN_SUBROGATION.value,
         description="Open a recovery/subrogation track against a likely liable third party.",
         required_args=["target_party", "rationale"],
+    ),
+    ToolSpec(
+        name=ToolName.SEND_CLAIMANT_MESSAGE.value,
+        description="Send a claimant-facing status update or decision message.",
+        required_args=["claim_id", "message"],
+    ),
+    ToolSpec(
+        name=ToolName.ADD_CLAIM_NOTE.value,
+        description="Add an audit note to the claim file.",
+        required_args=["claim_id", "note_type", "subject", "body"],
+        optional_args=["related_object_id"],
+    ),
+    ToolSpec(
+        name=ToolName.CLOSE_CLAIM.value,
+        description="Close the claim file after required workflow, notes, and communications.",
+        required_args=["claim_id", "disposition", "rationale"],
     ),
     ToolSpec(
         name=ToolName.SUBMIT_FINAL_DECISION.value,

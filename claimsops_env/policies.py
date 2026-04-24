@@ -17,13 +17,50 @@ class ScriptedBaselinePolicy(ActionPolicy):
     def next_action(self, observation: Observation, context: AgentContext) -> dict[str, Any]:
         if "verify_policy" in observation.open_tasks:
             return {"tool": "get_policy", "args": {"policy_id": observation.policy_id}}
-        if "check_policy_status" in observation.open_tasks:
+        if "verify_coverage" in observation.open_tasks:
             return {
-                "tool": "check_policy_status",
-                "args": {"policy_id": observation.policy_id, "loss_date": observation.loss_date.isoformat()},
+                "tool": "verify_coverage",
+                "args": {
+                    "claim_id": observation.claim_id,
+                    "exposure_id": observation.exposures[0].exposure_id,
+                    "loss_facts": observation.claimant_statement,
+                },
             }
+        if "assign_appraisal" in observation.open_tasks:
+            method = "field" if "possible_prior_damage" in observation.alerts else "photo"
+            return {"tool": "assign_appraisal", "args": {"claim_id": observation.claim_id, "method": method}}
         if "inspect_estimate" in observation.open_tasks:
             return {"tool": "inspect_repair_estimate", "args": {"estimate_id": observation.estimate_id}}
+        if "review_estimate" in observation.open_tasks:
+            action = "approve"
+            if "near_total_loss_threshold" in observation.alerts:
+                action = "confirm_total_loss"
+            elif "estimate_duplicate_line" in observation.alerts:
+                action = "request_supplement"
+            elif "possible_prior_damage" in observation.alerts:
+                action = "escalate_field"
+            elif any(evidence.kind.value == "repair_estimate" and evidence.flags for evidence in observation.available_evidence):
+                action = "request_photos" if "authority_threshold_risk" in observation.alerts else action
+            return {
+                "tool": "review_estimate",
+                "args": {
+                    "claim_id": observation.claim_id,
+                    "estimate_id": observation.estimate_id,
+                    "action": action,
+                    "rationale": "Estimate reviewed against visible damage, limits, and leakage indicators.",
+                },
+            }
+        if "request_valuation" in observation.open_tasks:
+            return {"tool": "request_valuation", "args": {"claim_id": observation.claim_id, "reason": "Damage is near total-loss threshold."}}
+        if "request_authority_approval" in observation.open_tasks:
+            return {
+                "tool": "request_authority_approval",
+                "args": {
+                    "exposure_id": observation.exposures[0].exposure_id,
+                    "amount": observation.requested_amount,
+                    "rationale": "Visible exposure exceeds adjuster authority threshold.",
+                },
+            }
         for task in observation.open_tasks:
             if task.startswith("request_"):
                 return {
@@ -53,14 +90,38 @@ class ScriptedBaselinePolicy(ActionPolicy):
             amount = float(estimate.get("covered_amount") or observation.requested_amount)
             return {
                 "tool": "set_reserve",
-                "args": {"amount": amount, "rationale": "Reserve set from visible repair exposure."},
+                "args": {
+                    "exposure_id": observation.exposures[0].exposure_id,
+                    "amount": amount,
+                    "cost_category": "auto_body",
+                    "rationale": "Reserve set from visible repair exposure.",
+                },
+            }
+        if "send_claimant_update" in observation.open_tasks:
+            return {
+                "tool": "send_claimant_message",
+                "args": {
+                    "claim_id": observation.claim_id,
+                    "message": "We are reviewing coverage, damage evidence, and applicable deductible. We will contact you with the next step.",
+                },
+            }
+        if "add_closure_note" in observation.open_tasks:
+            return {
+                "tool": "add_claim_note",
+                "args": {
+                    "claim_id": observation.claim_id,
+                    "note_type": "closure",
+                    "subject": "Pre-closure audit",
+                    "body": "Policy, coverage, estimate, reserve, communication, and evidence were reviewed before final disposition.",
+                    "related_object_id": observation.claim_id,
+                },
             }
         return self._final_decision(observation, context)
 
     def _final_decision(self, observation: Observation, context: AgentContext) -> dict[str, Any]:
         policy = observation.visible_policy or {}
         estimate = self._latest_success_data(context, "inspect_repair_estimate")
-        status = self._latest_success_data(context, "check_policy_status")
+        status = observation.coverage_result or self._latest_success_data(context, "verify_coverage")
         fraud = self._latest_success_data(context, "check_fraud_indicators")
 
         active_on_loss = bool(status.get("active_on_loss")) if status else policy.get("status") == "active"
@@ -96,6 +157,7 @@ class ScriptedBaselinePolicy(ActionPolicy):
                 "claimant_message": message,
                 "evidence_cited": evidence_ids,
                 "rationale": rationale,
+                "closure_disposition": "paid_closed" if decision == "approve" else "denied_closed",
             },
         }
 

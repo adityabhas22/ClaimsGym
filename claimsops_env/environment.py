@@ -9,9 +9,11 @@ from pydantic import ValidationError
 from claimsops_env.generator import EpisodeSpec, ScenarioGenerator
 from claimsops_env.models import (
     ActionRecord,
+    ActivityStatus,
     DocumentType,
     FinancialSnapshot,
     Observation,
+    PlatformState,
     RewardBreakdown,
     StepResult,
     ToolName,
@@ -30,6 +32,7 @@ class ClaimsOpsEnv:
         self._spec: EpisodeSpec | None = None
         self._visible_policy: dict[str, Any] | None = None
         self._evidence = []
+        self._platform_state = PlatformState()
         self._diary: list[str] = []
         self._communications: list[str] = []
         self._financial = FinancialSnapshot()
@@ -50,6 +53,7 @@ class ClaimsOpsEnv:
         )
         self._visible_policy = None
         self._evidence = deepcopy(self._spec.claim.initial_evidence)
+        self._platform_state = deepcopy(self._spec.platform_state)
         self._diary = ["Claim file opened."]
         self._communications = []
         self._financial = FinancialSnapshot()
@@ -107,6 +111,7 @@ class ClaimsOpsEnv:
         self._remaining_steps = max(0, self._remaining_steps - 1)
         if self._remaining_steps == 0:
             terminal = True
+        self._advance_activities()
 
         self._action_log.append(
             ActionRecord(
@@ -155,6 +160,7 @@ class ClaimsOpsEnv:
             spec=self._spec,
             visible_policy=deepcopy(self._visible_policy),
             evidence=deepcopy(self._evidence),
+            platform_state=deepcopy(self._platform_state),
             diary=deepcopy(self._diary),
             communications=deepcopy(self._communications),
             financial_snapshot=deepcopy(self._financial),
@@ -163,9 +169,17 @@ class ClaimsOpsEnv:
             violations=deepcopy(self._violations),
         )
 
+    def _advance_activities(self) -> None:
+        for activity in self._platform_state.activities:
+            if _status_value(activity.status) == "open":
+                activity.due_in_steps = max(0, activity.due_in_steps - 1)
+                if activity.due_in_steps == 0:
+                    activity.status = ActivityStatus.OVERDUE
+
     def _apply_runtime(self, runtime: RuntimeView) -> None:
         self._visible_policy = runtime.visible_policy
         self._evidence = runtime.evidence
+        self._platform_state = runtime.platform_state
         self._diary = runtime.diary
         self._communications = runtime.communications
         self._financial = runtime.financial_snapshot
@@ -191,6 +205,18 @@ class ClaimsOpsEnv:
             latest_tool_result=self._latest_tool_result,
             visible_policy=self._visible_policy,
             available_evidence=self._evidence,
+            parties=self._platform_state.parties,
+            incidents=self._platform_state.incidents,
+            exposures=self._platform_state.exposures,
+            activities=self._platform_state.activities,
+            reserve_lines=self._platform_state.reserve_lines,
+            payments=self._platform_state.payments,
+            vendor_assignments=self._platform_state.vendor_assignments,
+            claim_notes=self._platform_state.notes,
+            appraisal_status=self._platform_state.appraisal_status,
+            coverage_result=self._platform_state.coverage_result,
+            alerts=self._alerts(),
+            audit_gaps=self._audit_gaps(),
             claim_diary=self._diary,
             financial_snapshot=self._financial,
             communications_sent=self._communications,
@@ -204,10 +230,16 @@ class ClaimsOpsEnv:
         tasks: list[str] = []
         if not self._workflow.policy_seen:
             tasks.append("verify_policy")
-        if not self._workflow.policy_status_checked:
-            tasks.append("check_policy_status")
+        if not self._platform_state.coverage_verified:
+            tasks.append("verify_coverage")
+        if not self._workflow.appraisal_assigned:
+            tasks.append("assign_appraisal")
         if not self._workflow.estimate_seen:
             tasks.append("inspect_estimate")
+        if self._workflow.estimate_seen and not self._workflow.estimate_reviewed:
+            tasks.append("review_estimate")
+        if "near_total_loss_threshold" in self._alerts() and not self._workflow.valuation_seen:
+            tasks.append("request_valuation")
         visible_doc_gaps = self._visible_document_gaps()
         received = {_doc_value(doc) for doc in self._workflow.documents_received}
         tasks.extend(f"request_{doc}" for doc in sorted(visible_doc_gaps - received))
@@ -217,9 +249,55 @@ class ClaimsOpsEnv:
             tasks.append("evaluate_subrogation")
         if self._financial.reserve_amount is None:
             tasks.append("set_reserve")
+        authority_limit = self._visible_policy.get("authority_limit") if self._visible_policy else None
+        if authority_limit and self._spec.claim.requested_amount > authority_limit and not self._workflow.authority_requested:
+            tasks.append("request_authority_approval")
+        if not self._workflow.claimant_updated:
+            tasks.append("send_claimant_update")
+        if not self._workflow.closure_note_added:
+            tasks.append("add_closure_note")
         if not self._workflow.final_decision_submitted:
             tasks.append("submit_final_decision")
         return tasks
+
+    def _alerts(self) -> list[str]:
+        self._require_reset()
+        alerts: list[str] = []
+        if self._visible_document_gaps():
+            alerts.append("visible_document_gap")
+        if self._visible_subrogation_signal():
+            alerts.append("possible_subrogation")
+        if self._spec.repair_estimate.gross_amount >= (self._spec.repair_estimate.total_loss_threshold or float("inf")):
+            alerts.append("near_total_loss_threshold")
+        if self._spec.repair_estimate.duplicate_line_amount > 0:
+            alerts.append("estimate_duplicate_line")
+        if self._spec.repair_estimate.unrelated_damage_amount > 0:
+            alerts.append("possible_prior_damage")
+        authority_limit = self._visible_policy.get("authority_limit") if self._visible_policy else None
+        if authority_limit and self._spec.claim.requested_amount > authority_limit:
+            alerts.append("authority_threshold_risk")
+        overdue = [activity.activity_id for activity in self._platform_state.activities if _status_value(activity.status) in {"open", "overdue"} and activity.due_in_steps <= 0]
+        if overdue:
+            alerts.append("activity_overdue")
+        return alerts
+
+    def _audit_gaps(self) -> list[str]:
+        self._require_reset()
+        gaps: list[str] = []
+        if not self._platform_state.coverage_verified:
+            gaps.append("coverage_not_verified")
+        if not self._workflow.estimate_reviewed:
+            gaps.append("estimate_not_reviewed")
+        if not self._platform_state.reserve_lines:
+            gaps.append("reserve_not_set")
+        if not self._workflow.claimant_updated:
+            gaps.append("claimant_not_updated")
+        if not any(note.note_type.value == "closure" for note in self._platform_state.notes):
+            gaps.append("closure_note_missing")
+        open_activities = [activity.activity_id for activity in self._platform_state.activities if _status_value(activity.status) in {"open", "overdue"}]
+        if open_activities:
+            gaps.append("open_activities")
+        return gaps
 
     def _visible_document_gaps(self) -> set[str]:
         self._require_reset()
@@ -271,6 +349,8 @@ class ClaimsOpsEnv:
             final_decision=self._final_decision,
             approved_payment=self._financial.approved_payment,
             reserve_amount=self._financial.reserve_amount,
+            platform_state=self._platform_state,
+            action_log=self._action_log,
             evidence_ids={evidence.evidence_id for evidence in self._evidence},
             requested_documents=list(self._workflow.documents_requested),
             remaining_steps=self._remaining_steps,
@@ -293,3 +373,7 @@ def _contains_hidden_probe(args: dict[str, Any]) -> bool:
 
 def _doc_value(doc: DocumentType | str) -> str:
     return doc.value if isinstance(doc, DocumentType) else str(doc)
+
+
+def _status_value(status: Any) -> str:
+    return status.value if hasattr(status, "value") else str(status)

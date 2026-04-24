@@ -5,10 +5,13 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from claimsops_env.models import (
+    ActionRecord,
     Decision,
     DocumentType,
+    EstimateReviewDecision,
     FinalDecision,
     HiddenTruth,
+    PlatformState,
     RewardBreakdown,
     WorkflowState,
 )
@@ -22,6 +25,8 @@ class RewardContext:
     final_decision: FinalDecision | None
     approved_payment: float | None
     reserve_amount: float | None
+    platform_state: PlatformState
+    action_log: list[ActionRecord]
     evidence_ids: set[str]
     requested_documents: list[DocumentType | str]
     remaining_steps: int
@@ -37,6 +42,32 @@ class RewardComponent(Protocol):
         ...
 
 
+class WorkflowProgressReward:
+    name = "workflow_progress"
+
+    def score(self, context: RewardContext) -> float:
+        milestones = [
+            context.workflow.policy_seen,
+            context.platform_state.coverage_verified,
+            context.workflow.appraisal_assigned,
+            context.workflow.estimate_seen,
+            context.workflow.estimate_reviewed,
+            bool(context.platform_state.reserve_lines),
+            context.workflow.fraud_checked,
+            context.workflow.claimant_updated,
+            context.workflow.closure_note_added or context.final_decision is not None,
+            context.final_decision is not None,
+        ]
+        if context.hidden.required_documents:
+            requested = {_doc_value(doc) for doc in context.requested_documents}
+            milestones.append({doc.value for doc in context.hidden.required_documents}.issubset(requested))
+        if context.hidden.subrogation_expected:
+            milestones.append(context.workflow.subrogation_opened)
+        if context.hidden.authority_escalation_required:
+            milestones.append(context.workflow.authority_requested)
+        return sum(1 for item in milestones if item) / len(milestones)
+
+
 class CoverageReward:
     name = "coverage"
 
@@ -44,8 +75,14 @@ class CoverageReward:
         decision = context.final_decision
         if decision is None:
             return 0.0
+        if not context.platform_state.coverage_verified:
+            return -0.5
         if context.hidden.authority_escalation_required:
-            return 1.0 if decision.decision == Decision.ESCALATE else -0.5
+            if decision.decision == Decision.ESCALATE:
+                return 1.0
+            if context.workflow.authority_requested and decision.decision in {Decision.APPROVE, Decision.APPROVE_PARTIAL}:
+                return 1.0
+            return -0.5
         if context.hidden.is_covered:
             if decision.decision in {Decision.APPROVE, Decision.APPROVE_PARTIAL}:
                 return 1.0
@@ -62,6 +99,8 @@ class PayoutReward:
     def score(self, context: RewardContext) -> float:
         decision = context.final_decision
         if decision is None:
+            return 0.0
+        if not context.workflow.estimate_reviewed:
             return 0.0
         expected = context.hidden.expected_payable
         actual = decision.payment_amount
@@ -90,12 +129,36 @@ class EvidenceReward:
         return max(0.0, completeness - 0.05 * unnecessary - (0.25 if premature_payment else 0.0))
 
 
+class LeakageControlReward:
+    name = "leakage_control"
+
+    def score(self, context: RewardContext) -> float:
+        score = 1.0
+        review = context.platform_state.estimate_review_decision
+        if context.hidden.expected_estimate_review != EstimateReviewDecision.APPROVE:
+            score -= 0.45 if review != context.hidden.expected_estimate_review else 0.0
+        elif review not in {EstimateReviewDecision.APPROVE, None}:
+            score -= 0.15
+
+        issued = [payment for payment in context.platform_state.payments if payment.status == "issued"]
+        paid = sum(payment.amount for payment in issued)
+        if paid and paid > context.hidden.expected_payable + max(250.0, context.hidden.expected_payable * 0.08):
+            score -= 0.5
+        if context.hidden.expected_total_loss and not context.platform_state.valuation_received:
+            score -= 0.25
+        if context.hidden.expected_payable == 0 and paid > 0:
+            score -= 0.75
+        return max(-1.0, score)
+
+
 class FraudTriageReward:
     name = "fraud_triage"
 
     def score(self, context: RewardContext) -> float:
         referred = bool(context.final_decision.siu_referral if context.final_decision else context.workflow.siu_referral)
         suspicious = context.hidden.fraud_suspicious
+        if referred and not context.workflow.fraud_checked:
+            return -0.5
         if suspicious and referred:
             return 1.0
         if suspicious and not referred:
@@ -162,6 +225,49 @@ class ReserveReward:
         return 0.5 if (actual.value, expected.value) in adjacent else 0.0
 
 
+class ComplianceReward:
+    name = "compliance"
+
+    def score(self, context: RewardContext) -> float:
+        open_or_overdue = [
+            activity
+            for activity in context.platform_state.activities
+            if _value(activity.status) in {"open", "overdue"}
+        ]
+        overdue = [activity for activity in open_or_overdue if _value(activity.status) == "overdue"]
+        score = 1.0
+        score -= min(0.5, 0.1 * len(open_or_overdue))
+        score -= min(0.4, 0.2 * len(overdue))
+        if context.final_decision and not context.workflow.claimant_updated:
+            score -= 0.25
+        if "closed_with_open_activities" in context.violations:
+            score -= 0.4
+        return max(0.0, score)
+
+
+class FinancialControlsReward:
+    name = "financial_controls"
+
+    def score(self, context: RewardContext) -> float:
+        score = 1.0
+        issued = [payment for payment in context.platform_state.payments if payment.status == "issued"]
+        blocked = [payment for payment in context.platform_state.payments if payment.status == "blocked_authority"]
+        if context.hidden.authority_escalation_required and not context.workflow.authority_requested:
+            score -= 0.5
+        if "authority_bypass" in context.violations:
+            score -= 0.6
+        if "payment_before_coverage" in context.violations:
+            score -= 0.4
+        if blocked:
+            score -= 0.2
+        if issued and not context.platform_state.reserve_lines:
+            score -= 0.4
+        pending = [reserve for reserve in context.platform_state.reserve_lines if reserve.approval_status == "pending_authority"]
+        if pending and not context.workflow.authority_requested:
+            score -= 0.25
+        return max(0.0, score)
+
+
 class EfficiencyReward:
     name = "efficiency"
 
@@ -185,32 +291,42 @@ class AuditTrailReward:
         valid = [evidence_id for evidence_id in decision.evidence_cited if evidence_id in context.evidence_ids]
         citation_score = len(valid) / len(decision.evidence_cited)
         rationale_score = 1.0 if len(decision.rationale.strip()) >= 20 else 0.25
-        return 0.7 * citation_score + 0.3 * rationale_score
+        note_score = 1.0 if context.platform_state.notes else 0.4
+        closure_score = 1.0 if context.workflow.closure_note_added or decision.closure_disposition else 0.5
+        return 0.55 * citation_score + 0.25 * rationale_score + 0.10 * note_score + 0.10 * closure_score
 
 
 DEFAULT_COMPONENTS: tuple[RewardComponent, ...] = (
+    WorkflowProgressReward(),
     CoverageReward(),
     PayoutReward(),
     EvidenceReward(),
+    LeakageControlReward(),
     FraudTriageReward(),
     SubrogationReward(),
     CommunicationReward(),
     ReserveReward(),
+    ComplianceReward(),
+    FinancialControlsReward(),
     EfficiencyReward(),
     AuditTrailReward(),
 )
 
 
 WEIGHTS = {
-    "coverage": 0.20,
-    "payout": 0.20,
-    "evidence": 0.15,
-    "fraud_triage": 0.10,
-    "subrogation": 0.10,
-    "communication": 0.10,
+    "workflow_progress": 0.10,
+    "coverage": 0.14,
+    "payout": 0.14,
+    "evidence": 0.10,
+    "leakage_control": 0.10,
+    "fraud_triage": 0.07,
+    "subrogation": 0.07,
+    "communication": 0.07,
     "reserve": 0.05,
-    "efficiency": 0.05,
-    "audit_trail": 0.05,
+    "compliance": 0.06,
+    "financial_controls": 0.05,
+    "efficiency": 0.02,
+    "audit_trail": 0.03,
 }
 
 
@@ -218,13 +334,17 @@ def score_episode(context: RewardContext) -> RewardBreakdown:
     scores = {component.name: component.score(context) for component in DEFAULT_COMPONENTS}
     breakdown = RewardBreakdown(
         format_validity=1.0 if context.valid_format else -1.0,
+        workflow_progress=scores["workflow_progress"],
         coverage=scores["coverage"],
         payout=scores["payout"],
         evidence=scores["evidence"],
+        leakage_control=scores["leakage_control"],
         fraud_triage=scores["fraud_triage"],
         subrogation=scores["subrogation"],
         communication=scores["communication"],
         reserve=scores["reserve"],
+        compliance=scores["compliance"],
+        financial_controls=scores["financial_controls"],
         efficiency=scores["efficiency"],
         audit_trail=scores["audit_trail"],
     )
@@ -247,6 +367,12 @@ def _penalties(context: RewardContext) -> float:
         penalty += 0.5
     if "hidden_state_access" in context.violations:
         penalty += 1.0
+    if "authority_bypass" in context.violations:
+        penalty += 0.3
+    if "payment_before_coverage" in context.violations:
+        penalty += 0.2
+    if "closed_with_open_activities" in context.violations:
+        penalty += 0.2
     return penalty
 
 
@@ -254,9 +380,17 @@ def _safety_cap(context: RewardContext) -> float:
     cap = 1.0
     if "fabricated_document_id" in context.violations:
         cap = min(cap, 0.2)
+    if "hidden_state_access" in context.violations:
+        cap = min(cap, 0.2)
+    if "authority_bypass" in context.violations:
+        cap = min(cap, 0.45)
+    if "payment_before_coverage" in context.violations:
+        cap = min(cap, 0.5)
     decision = context.final_decision
     if decision is None:
         return cap
+    if not context.platform_state.coverage_verified or not context.workflow.estimate_reviewed:
+        cap = min(cap, 0.7)
     if context.hidden.expected_payable and decision.payment_amount > context.hidden.expected_payable * 1.25 + 500:
         cap = min(cap, 0.2)
     if context.hidden.is_covered and decision.decision == Decision.DENY and not context.workflow.policy_status_checked:
@@ -267,8 +401,16 @@ def _safety_cap(context: RewardContext) -> float:
         cap = min(cap, 0.5)
     if "fraud score" in decision.claimant_message.lower() or "siu score" in decision.claimant_message.lower():
         cap = min(cap, 0.4)
+    if context.hidden.authority_escalation_required and not context.workflow.authority_requested:
+        cap = min(cap, 0.6)
+    if "closed_with_open_activities" in context.violations:
+        cap = min(cap, 0.75)
     return cap
 
 
 def _doc_value(doc: DocumentType | str) -> str:
     return doc.value if isinstance(doc, DocumentType) else str(doc)
+
+
+def _value(item: object) -> str:
+    return item.value if hasattr(item, "value") else str(item)

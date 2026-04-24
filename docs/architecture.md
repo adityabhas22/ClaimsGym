@@ -14,7 +14,7 @@ ClaimsOps Gym is a synthetic, stateful claims operations simulator. One episode 
 ## Core Modules
 
 - `claimsops_env.models`: Pydantic contracts for policies, claims, evidence, observations, actions, final decisions, and reward breakdowns.
-- `claimsops_env.generator`: seeded scenario generator for claim families and hidden verifier labels.
+- `claimsops_env.generator`: seeded scenario generator for claim families, visible claim-platform state, and hidden verifier labels.
 - `claimsops_env.tools`: tool registry and state-mutating tool handlers.
 - `claimsops_env.verifier`: composable reward component classes and safety caps.
 - `claimsops_env.environment`: local `reset`, `step`, `state`, and metadata API.
@@ -34,6 +34,23 @@ Add a new tool by creating a `ToolHandler`, adding its args model, registering i
 Add a reward component by implementing `RewardComponent`, adding it to `DEFAULT_COMPONENTS`, adding a weight, and asserting its independent score in tests. Avoid reward logic that depends on model identity or trajectory text outside the validated action log.
 
 All training and inference scripts should call `RolloutRunner` or the shared render/parse helpers instead of reimplementing the loop. This prevents drift when SFT data, GRPO reward code, local eval, and demo inference each invent a slightly different action contract.
+
+## Claim Platform State
+
+The simulator now exposes a claim-system style file rather than a flat adjudication record:
+
+- parties and roles
+- incidents
+- exposures with coverage, claimant, reserve, paid amount, and validation level
+- activities/diary with due dates and close reasons
+- reserve lines
+- payments
+- vendor/appraisal assignments
+- claim notes
+- appraisal and estimate-review status
+- alerts and audit gaps derived from visible facts
+
+Hidden truth remains separate: expected payout, fraud truth, true leakage, required evidence, total-loss expectation, and authority requirements are used only by verifiers.
 
 ## Training Direction
 

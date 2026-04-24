@@ -58,7 +58,7 @@ configs/
 
 ## Reward Columns
 
-Rewards are logged as separate components: coverage, payout, evidence, fraud triage, subrogation, communication, reserve, efficiency, audit trail, penalties, and safety cap.
+Rewards are logged as separate components: workflow progress, coverage, payout, evidence, leakage control, fraud triage, subrogation, communication, reserve, compliance, financial controls, efficiency, audit trail, penalties, and safety cap.
 
 See `CODEX.md` for the full project brief and extension plan.
 

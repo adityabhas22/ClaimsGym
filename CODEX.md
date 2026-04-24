@@ -54,18 +54,31 @@ The initial observation is compact and includes the visible claim file, availabl
 
 ## Tool Design
 
-The tool registry is intentionally small for the MVP:
+The tool registry is intentionally claim-platform shaped for the MVP:
 
 - `get_policy`
+- `get_policy_snapshot`
 - `check_policy_status`
+- `verify_coverage`
+- `create_or_update_exposure`
 - `inspect_repair_estimate`
+- `inspect_evidence`
+- `assign_appraisal`
+- `review_estimate`
+- `request_valuation`
 - `request_document`
 - `query_prior_claims`
 - `check_fraud_indicators`
 - `set_reserve`
 - `approve_payment`
+- `issue_payment`
+- `request_authority_approval`
 - `refer_to_siu`
+- `open_siu_referral`
 - `open_subrogation`
+- `send_claimant_message`
+- `add_claim_note`
+- `close_claim`
 - `submit_final_decision`
 
 Each tool owns its argument schema and mutation logic. Environment state should not be mutated outside tools except for step accounting, action logging, and terminal state.
@@ -75,13 +88,17 @@ Each tool owns its argument schema and mutation logic. Environment state should 
 The scalar reward is only the reporting aggregate. The real design surface is the independent reward columns:
 
 - format validity
+- workflow progress
 - coverage
 - payout
 - evidence
+- leakage control
 - fraud triage
 - subrogation
 - communication
 - reserve
+- compliance
+- financial controls
 - efficiency
 - audit trail
 - penalties
